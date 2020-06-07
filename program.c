@@ -407,7 +407,7 @@ Instruction
   union
   {
     int64_t i64;
-    struct { byte r0, r1; };
+    byte r[2];
     struct ModlObject * object;
   } a[4];
 };
@@ -419,7 +419,9 @@ static struct Instruction decode_instruction(struct VMState * state)
   struct InstructionParametersTemplate template = instruction_parameters_templates[opcode];
   if (TP_ERROR == template.p[0])
   {
-    printf("\n\x1b[31;1m  Unknown instruction: %s\x1b[0m\n", instructions_names_table[opcode] || "#???#");
+    char const * name = instructions_names_table[opcode];
+    if (NULL == name) name = "#???#";
+    printf("\x1b[31;1mfailed to decode instruction: %s\x1b[0m\n", name);
     exit(EXIT_FAILURE);
   }
 
@@ -432,14 +434,14 @@ static struct Instruction decode_instruction(struct VMState * state)
 
       case TP_REGAL:
       {
-        instruction.a[i].r0 = state->code[state->ip + offset] & 0xF;
+        instruction.a[i].r[0] = state->code[state->ip + offset] & 0xF;
         offset += 1;
       } break;
 
       case TP_REGSP:
       {
-        instruction.a[i].r0 = (state->code[state->ip + offset] >> 4) & 0xF;
-        instruction.a[i].r1 = (state->code[state->ip + offset] >> 0) & 0xF;
+        instruction.a[i].r[0] = (state->code[state->ip + offset] >> 4) & 0xF;
+        instruction.a[i].r[1] = (state->code[state->ip + offset] >> 0) & 0xF;
         offset += 1;
       } break;
 
@@ -459,7 +461,7 @@ static struct Instruction decode_instruction(struct VMState * state)
 
       case TP_SEBO:
       {
-        struct Sebo data = modl_decode_sebo(state->code + offset);
+        struct Sebo data = modl_decode_sebo(&state->code[state->ip] + offset);
         instruction.a[i].object = data.object;
         offset += data.byte_length;
       } break;
@@ -484,10 +486,10 @@ static void display_instruction(struct Instruction instruction)
     switch (template.p[i])
     {
       case TP_REGAL:
-        printf("\x1b[37;1mR%d\x1b[0m", instruction.a[i].r0);
+        printf("\x1b[37;1mR%d\x1b[0m", instruction.a[i].r[0]);
         break;
       case TP_REGSP:
-        printf("\x1b[37;1mR%d\x1b[0m, \x1b[37;1mR%d\x1b[0m", instruction.a[i].r0, instruction.a[i].r1);
+        printf("\x1b[37;1mR%d\x1b[0m, \x1b[37;1mR%d\x1b[0m", instruction.a[i].r[0], instruction.a[i].r[1]);
         break;
       case TP_SEBO:
         display_modl_object(instruction.a[i].object);
@@ -522,32 +524,19 @@ static void vm_write_register(struct VMState * const state, byte r, struct ModlO
   state->registers[r] = val;
 }
 
-static void display_current_instruction(struct VMState const * const state)
-{
-  if (NULL == instructions_names_table[state->code[state->ip]])
-  {
-    printf("\x1b[31;1m[%04lx] #?%02x?#\x1b[0m\n", state->ip, state->code[state->ip]);
-    return;
-  }
-
-  printf("[%04lx] \x1b[36m%s\x1b[0m ", state->ip, instructions_names_table[state->code[state->ip]]);
-}
 
 struct ModlObject * run(struct VMState * const state)
 {
-  byte instruction;
-
   while (TRUE)
   {
-    // display_current_instruction(state);
-
-    struct Instruction instr = decode_instruction(state);
     printf("[%04lx] ", state->ip);
-    display_instruction(instr);
+    struct Instruction instruction = decode_instruction(state);
+    display_instruction(instruction);
+    state->ip += instruction.byte_length;
 
-    switch (instruction = state->code[state->ip])
+    switch (instruction.opcode)
     {
-      case OP_NOP: state->ip += 1; break;
+      case OP_NOP: break;
 
       case OP_RET:
       {
@@ -557,11 +546,7 @@ struct ModlObject * run(struct VMState * const state)
 
       case OP_LOADC:
       {
-        byte reg_dst = state->code[state->ip + 1] & 0xF;
-        struct Sebo const data = modl_decode_sebo(&state->code[state->ip + 2]);
-
-        vm_write_register(state, reg_dst, data.object);
-        state->ip += data.byte_length + 2;
+        vm_write_register(state, instruction.a[0].r[0], instruction.a[1].object);
       } break;
 
       case OP_ADD:
@@ -576,8 +561,8 @@ struct ModlObject * run(struct VMState * const state)
       case OP_NOR:
       case OP_NXOR:
       {
-        byte const reg_src = (state->code[state->ip + 1] >> 0) & 0xF;
-        byte const reg_dst = (state->code[state->ip + 1] >> 4) & 0xF;
+        byte const reg_dst = instruction.a[0].r[0];
+        byte const reg_src = instruction.a[0].r[1];
 
         struct ModlObject const * const obj_l = vm_read_register(state, reg_dst);
         struct ModlObject const * const obj_r = vm_read_register(state, reg_src);
@@ -593,7 +578,7 @@ struct ModlObject * run(struct VMState * const state)
           exit(EXIT_FAILURE);
         }
 
-        switch (instruction)
+        switch (instruction.opcode)
         {
           case OP_ADD: vm_write_register(state, reg_dst, int_to_modl(modl_to_int(obj_l) + modl_to_int(obj_r))); break;
           case OP_SUB: vm_write_register(state, reg_dst, int_to_modl(modl_to_int(obj_l) - modl_to_int(obj_r))); break;
@@ -606,23 +591,18 @@ struct ModlObject * run(struct VMState * const state)
           case OP_NAND: vm_write_register(state, reg_dst, int_to_modl(~(modl_to_int(obj_l) & modl_to_int(obj_r)))); break;
           case OP_NOR: vm_write_register(state, reg_dst, int_to_modl(~(modl_to_int(obj_l) | modl_to_int(obj_r)))); break;
           case OP_NXOR: vm_write_register(state, reg_dst, int_to_modl(~(modl_to_int(obj_l) ^ modl_to_int(obj_r)))); break;
+          default: break;
         }
-
-        state->ip += 2;
       } break;
 
       case OP_PUSH:
       {
-        byte reg_src = state->code[state->ip + 1] & 0xF;
-        state->stack[state->sp++] = vm_read_register(state, reg_src);
-        state->ip += 2;
+        state->stack[state->sp++] = vm_read_register(state, instruction.a[0].r[0]);
       } break;
 
       case OP_POP:
       {
-        byte reg_dst = state->code[state->ip + 1] & 0xF;
-        vm_write_register(state, reg_dst, state->stack[--state->sp]);
-        state->ip += 2;
+        vm_write_register(state, instruction.a[0].r[0], state->stack[--state->sp]);
       } break;
 
       default:
