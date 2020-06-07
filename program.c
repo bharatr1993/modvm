@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <stdint.h>
 #include <getopt.h>
+#include <inttypes.h>
 
 #include "helpers.h"
 
@@ -172,7 +173,7 @@ void display_modl_object(struct ModlObject *object)
   {
     case ModlNil:
     {
-      printf("\x1b[37;1m%s\n\x1b[0m", "nil");
+      printf("\x1b[37;1m%s\x1b[0m", "nil");
     } break;
 
     case ModlBoolean:
@@ -249,6 +250,13 @@ int32_t modl_to_int(struct ModlObject const * object)
   if (NULL == object) return 0;
   if (ModlInteger != object->type) return 0;
   return object->value.integer;
+}
+
+bool modl_to_bool(struct ModlObject const * object)
+{
+  if (NULL == object) return FALSE;
+  if (ModlBoolean != object->type) return TRUE;
+  return object->value.boolean;
 }
 
 
@@ -390,12 +398,26 @@ struct InstructionParametersTemplate
 
 struct InstructionParametersTemplate instruction_parameters_templates[256] =
 {
-  [OP_NOP] = {{ TP_EMPTY, }},
-  [OP_RET] = {{ TP_EMPTY, }},
+  [OP_NOP]    = {{ TP_EMPTY, }},
+  [OP_RET]    = {{ TP_EMPTY, }},
 
-  [OP_LOADC] = {{ TP_REGAL, TP_SEBO, }},
+  [OP_LOADC]  = {{ TP_REGAL, TP_SEBO, }},
 
-  [OP_ADD] = {{ TP_REGSP, }},
+  [OP_JMP]    = {{ TP_INT64, }},
+
+  [OP_ADD]    = {{ TP_REGSP, }},
+  [OP_SUB]    = {{ TP_REGSP, }},
+  [OP_MUL]    = {{ TP_REGSP, }},
+  [OP_DIV]    = {{ TP_REGSP, }},
+
+  [OP_CMPEQ]  = {{ TP_REGSP, }},
+  [OP_CMPNEQ] = {{ TP_REGSP, }},
+
+  [OP_JCF]    = {{ TP_REGAL, TP_INT64, }},
+  [OP_JCT]    = {{ TP_REGAL, TP_INT64, }},
+
+  [OP_POP]    = {{ TP_REGAL, }},
+  [OP_PUSH]   = {{ TP_REGAL, }},
 };
 
 struct __attribute__ ((__packed__))
@@ -491,6 +513,9 @@ static void display_instruction(struct Instruction instruction)
       case TP_REGSP:
         printf("\x1b[37;1mR%d\x1b[0m, \x1b[37;1mR%d\x1b[0m", instruction.a[i].r[0], instruction.a[i].r[1]);
         break;
+      case TP_INT64:
+        printf("[%" PRId64 "]", instruction.a[i].i64);
+        break;
       case TP_SEBO:
         display_modl_object(instruction.a[i].object);
         break;
@@ -549,6 +574,8 @@ struct ModlObject * run(struct VMState * const state)
         vm_write_register(state, instruction.a[0].r[0], instruction.a[1].object);
       } break;
 
+      case OP_JMP: state->ip += instruction.a[0].i64 - instruction.byte_length; break;
+
       case OP_ADD:
       case OP_SUB:
       case OP_MUL:
@@ -560,6 +587,8 @@ struct ModlObject * run(struct VMState * const state)
       case OP_NAND:
       case OP_NOR:
       case OP_NXOR:
+      case OP_CMPEQ:
+      case OP_CMPNEQ:
       {
         byte const reg_dst = instruction.a[0].r[0];
         byte const reg_src = instruction.a[0].r[1];
@@ -591,13 +620,17 @@ struct ModlObject * run(struct VMState * const state)
           case OP_NAND: vm_write_register(state, reg_dst, int_to_modl(~(modl_to_int(obj_l) & modl_to_int(obj_r)))); break;
           case OP_NOR: vm_write_register(state, reg_dst, int_to_modl(~(modl_to_int(obj_l) | modl_to_int(obj_r)))); break;
           case OP_NXOR: vm_write_register(state, reg_dst, int_to_modl(~(modl_to_int(obj_l) ^ modl_to_int(obj_r)))); break;
+          case OP_CMPEQ: vm_write_register(state, reg_dst, bool_to_modl(modl_to_int(obj_l) == modl_to_int(obj_r))); break;
+          case OP_CMPNEQ: vm_write_register(state, reg_dst, bool_to_modl(modl_to_int(obj_l) != modl_to_int(obj_r))); break;
           default: break;
         }
       } break;
 
-      case OP_PUSH:
+      case OP_JCF:
+      case OP_JCT:
       {
-        state->stack[state->sp++] = vm_read_register(state, instruction.a[0].r[0]);
+        if (modl_to_bool(vm_read_register(state, instruction.a[0].r[0])) == (instruction.opcode == OP_JCT))
+          state->ip += instruction.a[1].i64 - instruction.byte_length;
       } break;
 
       case OP_POP:
@@ -605,9 +638,14 @@ struct ModlObject * run(struct VMState * const state)
         vm_write_register(state, instruction.a[0].r[0], state->stack[--state->sp]);
       } break;
 
+      case OP_PUSH:
+      {
+        state->stack[state->sp++] = vm_read_register(state, instruction.a[0].r[0]);
+      } break;
+
       default:
       {
-        printf("\n\x1b[31;1m  Unknown instruction\x1b[0m\n");
+        printf("\x1b[31;1m  Unknown instruction\x1b[0m\n");
         exit(EXIT_FAILURE);
       } break;
     }
