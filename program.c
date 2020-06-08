@@ -75,6 +75,7 @@ ModlOpcode
   OP_ENVGETR = 0x45,
   OP_ENVGETC = 0x46,
   OP_ENVSETR = 0x47,
+  OP_ENVSETC = 0x48,
 };
 
 static char const * const instructions_names_table[256] =
@@ -128,14 +129,9 @@ static char const * const instructions_names_table[256] =
   [0x45] = "ENVGETR",
   [0x46] = "ENVGETC",
   [0x47] = "ENVSETR",
+  [0x48] = "ENVSETC",
 };
 
-
-struct CallFrame
-{
-  size_t return_address;
-  // something else?
-};
 
 enum __attribute__ ((__packed__))
 ModlType
@@ -146,6 +142,15 @@ ModlType
   ModlFloating = 3,
   ModlString   = 4,
   ModlTable    = 5,
+  ModlFunction = 6,
+};
+
+struct ModlObject;
+struct ModlTableNode
+{
+  char const * name;
+  struct ModlObject * value;
+  struct ModlTableNode * next;
 };
 
 struct ModlObject
@@ -157,9 +162,11 @@ struct ModlObject
     int32_t integer;
     double floating;
     char const *string;
-    void *table;
+
+    struct ModlTableNode table;
   } value;
 };
+
 
 void display_modl_object(struct ModlObject *object)
 {
@@ -193,7 +200,7 @@ void display_modl_object(struct ModlObject *object)
 
     case ModlString:
     {
-      printf("\x1b[32m%s\x1b[0m", object->value.string);
+      printf("\x1b[32m\"%s\"\x1b[0m", object->value.string);
     } break;
   }
 }
@@ -208,8 +215,65 @@ struct ModlObject * modl_table()
 {
   struct ModlObject * object = (struct ModlObject*) malloc(sizeof (struct ModlObject));
   object->type = ModlTable;
-  object->value.table = NULL;
+  object->value.table = (struct ModlTableNode) { NULL, NULL, NULL };
   return object;
+}
+
+void modl_table_insert_kv(struct ModlObject * const self, char const * name, struct ModlObject * const value)
+{
+  if (NULL == self)
+  {
+    printf("%s\n", "((ModlObject*) self) == NULL!");
+    exit(EXIT_FAILURE);
+  }
+
+  if (ModlTable != self->type)
+  {
+    printf("%s\n", "((ModlObject *) self)->type != ModlTable!");
+    exit(EXIT_FAILURE);
+  }
+
+  struct ModlTableNode * node = &self->value.table;
+  while (NULL != node->name)
+  {
+    if (0 == strcmp(node->name, name))
+    {
+      node->value = value;
+      return;
+    }
+    node = node->next;
+  }
+
+  node->name = name;
+  node->value = value;
+  node->next = (struct ModlTableNode *) calloc(1, sizeof (struct ModlTableNode));
+}
+
+struct ModlObject * modl_table_get_v(struct ModlObject * const self, char const * name)
+{
+  if (NULL == self)
+  {
+    printf("%s\n", "((ModlObject*) self) == NULL!");
+    exit(EXIT_FAILURE);
+  }
+
+  if (ModlTable != self->type)
+  {
+    printf("%s\n", "((ModlObject *) self)->type != ModlTable!");
+    exit(EXIT_FAILURE);
+  }
+
+  struct ModlTableNode * node = &self->value.table;
+  while (NULL != node->name)
+  {
+    if (0 == strcmp(node->name, name))
+    {
+      return node->value;
+    }
+    node = node->next;
+  }
+
+  return modl_nil();
 }
 
 
@@ -356,6 +420,17 @@ struct Sebo modl_encode_sebo(struct ModlObject * object)
 }
 
 
+struct Environment
+{
+  struct Environment * parent;
+  struct ModlObject * vartable;
+};
+
+struct CallFrame
+{
+  size_t return_address;
+  struct Environment * environment;
+};
 
 struct RegisterAccessMonitor
 {
@@ -412,12 +487,18 @@ struct InstructionParametersTemplate instruction_parameters_templates[256] =
 
   [OP_CMPEQ]  = {{ TP_REGSP, }},
   [OP_CMPNEQ] = {{ TP_REGSP, }},
+  [OP_CMPNGT] = {{ TP_REGSP, }},
 
   [OP_JCF]    = {{ TP_REGAL, TP_INT64, }},
   [OP_JCT]    = {{ TP_REGAL, TP_INT64, }},
 
   [OP_POP]    = {{ TP_REGAL, }},
   [OP_PUSH]   = {{ TP_REGAL, }},
+
+  [OP_ENVGETR] = {{ TP_REGSP, }},
+  [OP_ENVGETC] = {{ TP_REGAL, TP_SEBO, }},
+  [OP_ENVSETR] = {{ TP_REGSP, }},
+  [OP_ENVSETC] = {{ TP_REGAL, TP_SEBO, }},
 };
 
 struct __attribute__ ((__packed__))
@@ -554,10 +635,25 @@ struct ModlObject * run(struct VMState * const state)
 {
   while (TRUE)
   {
+    printf("Registers: [ ");
+    for (size_t i = 0; i < 16; ++i)
+    {
+      display_modl_object(state->registers[i]);
+      printf("%c", ' ');
+    }
+    printf("%c\n", ']');
+
+    printf("Stack(%llu): [ ", state->sp);
+    for (size_t i = 0; i < state->sp; ++i)
+    {
+      display_modl_object(state->stack[i]);
+      printf("%c", ' ');
+    }
+    printf("%c\n", ']');
+
     printf("[%04lx] ", state->ip);
     struct Instruction instruction = decode_instruction(state);
     display_instruction(instruction);
-    state->ip += instruction.byte_length;
 
     switch (instruction.opcode)
     {
@@ -589,6 +685,7 @@ struct ModlObject * run(struct VMState * const state)
       case OP_NXOR:
       case OP_CMPEQ:
       case OP_CMPNEQ:
+      case OP_CMPNGT:
       {
         byte const reg_dst = instruction.a[0].r[0];
         byte const reg_src = instruction.a[0].r[1];
@@ -622,6 +719,7 @@ struct ModlObject * run(struct VMState * const state)
           case OP_NXOR: vm_write_register(state, reg_dst, int_to_modl(~(modl_to_int(obj_l) ^ modl_to_int(obj_r)))); break;
           case OP_CMPEQ: vm_write_register(state, reg_dst, bool_to_modl(modl_to_int(obj_l) == modl_to_int(obj_r))); break;
           case OP_CMPNEQ: vm_write_register(state, reg_dst, bool_to_modl(modl_to_int(obj_l) != modl_to_int(obj_r))); break;
+          case OP_CMPGT: vm_write_register(state, reg_dst, bool_to_modl(modl_to_int(obj_l) > modl_to_int(obj_r))); break;
           default: break;
         }
       } break;
@@ -635,6 +733,12 @@ struct ModlObject * run(struct VMState * const state)
 
       case OP_POP:
       {
+        if (0 == state->sp)
+        {
+          printf("\x1b[31;1m  Cannot pop from empty stack\x1b[0m\n");
+          exit(EXIT_FAILURE);
+        }
+
         vm_write_register(state, instruction.a[0].r[0], state->stack[--state->sp]);
       } break;
 
@@ -643,12 +747,34 @@ struct ModlObject * run(struct VMState * const state)
         state->stack[state->sp++] = vm_read_register(state, instruction.a[0].r[0]);
       } break;
 
+      case OP_ENVGETC:
+      {
+        vm_write_register(
+          state, instruction.a[0].r[0],
+          modl_table_get_v(
+            state->call_stack[state->csp].environment->vartable,
+            instruction.a[1].object->value.string
+          )
+        );
+      } break;
+
+      case OP_ENVSETC:
+      {
+        modl_table_insert_kv(
+          state->call_stack[state->csp].environment->vartable,
+          instruction.a[1].object->value.string,
+          vm_read_register(state, instruction.a[0].r[0])
+        );
+      } break;
+
       default:
       {
-        printf("\x1b[31;1m  Unknown instruction\x1b[0m\n");
+        printf("\x1b[31;1m  Instruction implementation not found\x1b[0m\n");
         exit(EXIT_FAILURE);
       } break;
     }
+
+    state->ip += instruction.byte_length;
   }
 
   return NULL;
@@ -690,10 +816,13 @@ int main(int argc, char *argv[])
   int opt;
   byte input[INPUT_SIZE] = { [0 ... (INPUT_SIZE - 1)] = OP_RET };
   size_t input_length = 0;
-  struct VMState vm_state = {
+
+  struct Environment base_environment = { NULL, modl_table() };
+  struct VMState vm_state =
+  {
     .code = NULL,
     .ip = 0, .csp = 0, .sp = 0,
-    .call_stack = { { 0 }, },
+    .call_stack = { { 0, &base_environment }, },
     .registers = { [0 ... 15] = modl_nil() },
     .stack = { NULL },
     .ram = {
