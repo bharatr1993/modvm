@@ -952,6 +952,9 @@ struct InstructionParametersTemplate instruction_parameters_templates[256] =
   [OP_ENVGETC] = {{ TP_REGAL, TP_SEBO, }},
   [OP_ENVSETR] = {{ TP_REGSP, }},
   [OP_ENVSETC] = {{ TP_REGAL, TP_SEBO, }},
+  [OP_ENVUPKR] = {{ TP_REGSP, }},
+  [OP_ENVUPKC] = {{ TP_REGAL, TP_SEBO, }},
+  [OP_ENVUPKT] = {{ TP_REGAL, }},
 };
 
 struct __attribute__ ((__packed__))
@@ -1405,6 +1408,28 @@ struct ModlObject * run(struct VMState * const state)
           instruction.a[1].object,
           vm_reg_read(state, instruction.a[0].r[0])
         );
+      } break;
+
+      case OP_ENVUPKC:
+      {
+        byte const reg_val = instruction.a[0].r[0];
+        byte const reg_arg = instruction.a[0].r[1];
+
+        struct ModlObject * obj_vals = vm_reg_read(state, reg_val);
+        struct ModlObject * obj_args = vm_reg_read(state, reg_arg);
+
+        struct ModlObject * index = int_to_modl(0);
+        while (modl_table_has_k(obj_vals, index) && modl_table_has_k(obj_args, index))
+        {
+          modl_table_insert_kv(
+            vm_get_current_environment(state)->vartable,
+            modl_table_get_v(obj_args, index),
+            modl_table_get_v(obj_vals, index)
+          );
+          index->value.integer += 1;
+        }
+
+        modl_object_release_tmp(index);
       } break;
 
       default:
