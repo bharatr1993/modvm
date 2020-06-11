@@ -47,6 +47,9 @@ ModlOpcode
   OP_LOADD   = 0x0B,
   OP_LOADFUN = 0x0C,
 
+  OP_ROL     = 0x0D,
+  OP_ROR     = 0x0E,
+  OP_IDIV    = 0x0F,
   OP_ADD     = 0x10,
   OP_SUB     = 0x11,
   OP_MUL     = 0x12,
@@ -107,6 +110,9 @@ static char const * const instructions_names_table[256] =
   [0x0B] = "LOADD",
   [0x0C] = "LOADFUN",
 
+  [0x0D] = "ROL",
+  [0x0E] = "ROR",
+  [0x0F] = "IDIV",
   [0x10] = "ADD",
   [0x11] = "SUB",
   [0x12] = "MUL",
@@ -1077,16 +1083,27 @@ struct InstructionParametersTemplate instruction_parameters_templates[256] =
 
   [OP_LOADC]   = {{ TP_REGAL, TP_SEBO, }},
   [OP_TBLGETR] = {{ TP_REGSP, }},
+  [OP_TBLGETC] = {{ TP_REGAL, TP_SEBO, }},
 
   [OP_CALLR]   = {{ TP_REGAL, }},
   [OP_LOADFUN] = {{ TP_REGAL, TP_INT64, }},
 
   [OP_JMP]     = {{ TP_INT64, }},
 
+  [OP_ROL]     = {{ TP_REGSP, }},
+  [OP_ROR]     = {{ TP_REGSP, }},
+  [OP_IDIV]    = {{ TP_REGSP, }},
   [OP_ADD]     = {{ TP_REGSP, }},
   [OP_SUB]     = {{ TP_REGSP, }},
   [OP_MUL]     = {{ TP_REGSP, }},
   [OP_DIV]     = {{ TP_REGSP, }},
+  [OP_MOD]     = {{ TP_REGSP, }},
+  [OP_AND]     = {{ TP_REGSP, }},
+  [OP_OR]      = {{ TP_REGSP, }},
+  [OP_XOR]     = {{ TP_REGSP, }},
+  [OP_NAND]    = {{ TP_REGSP, }},
+  [OP_NOR]     = {{ TP_REGSP, }},
+  [OP_NXOR]    = {{ TP_REGSP, }},
 
   [OP_CMPEQ]   = {{ TP_REGSP, }},
   [OP_CMPNEQ]  = {{ TP_REGSP, }},
@@ -1420,6 +1437,9 @@ struct ModlObject * run(struct VMState * const state)
 
       case OP_JMP: state->ip += instruction.a[0].i64 - instruction.byte_length; break;
 
+      case OP_ROL:
+      case OP_ROR:
+      case OP_IDIV:
       case OP_ADD:
       case OP_SUB:
       case OP_MUL:
@@ -1459,15 +1479,21 @@ struct ModlObject * run(struct VMState * const state)
 
         if (obj_l->type != obj_r->type)
         {
-          printf("\x1b[31;1m  Values are required to have the same type: %d <> %d\x1b[0m\n", obj_l->type, obj_r->type);
+          printf(
+            "\x1b[31;1m  Values are required to have the same type: %s <> %s\x1b[0m\n",
+            modl_types_names_table[obj_l->type],
+            modl_types_names_table[obj_r->type]
+          );
           exit(EXIT_FAILURE);
         }
 
         if (ModlTypeInteger != obj_l->type && ModlTypeFloating != obj_l->type)
         {
           printf(
-            "\x1b[31;1m  This operation requires operands of integer or floating types: %d <> %d/%d\x1b[0m\n",
-            obj_l->type, ModlTypeInteger, ModlTypeFloating
+            "\x1b[31;1m  This operation requires operands of integer or floating types: %s <> %s/%s\x1b[0m\n",
+            modl_types_names_table[obj_l->type],
+            modl_types_names_table[ModlTypeInteger],
+            modl_types_names_table[ModlTypeFloating]
           );
           exit(EXIT_FAILURE);
         }
@@ -1476,6 +1502,9 @@ struct ModlObject * run(struct VMState * const state)
         {
           case TRUE: switch (instruction.opcode)
           {
+            case OP_ROL: vm_reg_write(state, reg_dst, int_to_modl(modl_to_int(obj_l) << modl_to_int(obj_r))); break;
+            case OP_ROR: vm_reg_write(state, reg_dst, int_to_modl(modl_to_int(obj_l) >> modl_to_int(obj_r))); break;
+            case OP_IDIV: vm_reg_write(state, reg_dst, int_to_modl(modl_to_int(obj_l) / modl_to_int(obj_r))); break;
             case OP_ADD: vm_reg_write(state, reg_dst, int_to_modl(modl_to_int(obj_l) + modl_to_int(obj_r))); break;
             case OP_SUB: vm_reg_write(state, reg_dst, int_to_modl(modl_to_int(obj_l) - modl_to_int(obj_r))); break;
             case OP_MUL: vm_reg_write(state, reg_dst, int_to_modl(modl_to_int(obj_l) * modl_to_int(obj_r))); break;
@@ -1737,9 +1766,16 @@ static struct ModlObject * modl_std_to_string(struct VMState * vm)
       modl_object_release(a);
       return str_to_modl(res);
     }
+    case ModlTypeFloating:
+    {
+      char res[64];
+      sprintf(res, "%.17g", modl_to_double(a));
+      modl_object_release(a);
+      return str_to_modl(res);
+    }
     case ModlTypeString:
     {
-      return a;
+      return modl_object_disown(a);
     }
 
     default: modl_object_release(a); return modl_nil();
