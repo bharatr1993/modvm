@@ -27,6 +27,7 @@ typedef byte bool;
 
 
 #define VM_SETTING_REGITERS_COUNT 16
+bool VM_SETTING_SILENT = FALSE;
 
 
 enum __attribute__ ((__packed__))
@@ -39,40 +40,40 @@ ModlOpcode
   OP_LOADC   = 0x04,
   OP_TBLGETR = 0x05,
   OP_TBLGETC = 0x06,
-  OP_SETR    = 0x07,
-  OP_SETC    = 0x08,
+  // OP_SETR    = 0x07, // removed
+  // OP_SETC    = 0x08, // removed
   OP_CALLR   = 0x09,
   OP_CALLC   = 0x0A,
   OP_LOADD   = 0x0B,
   OP_LOADFUN = 0x0C,
 
-  OP_ADD  = 0x10,
-  OP_SUB  = 0x11,
-  OP_MUL  = 0x12,
-  OP_DIV  = 0x13,
-  OP_MOD  = 0x14,
-  OP_AND  = 0x15,
-  OP_OR   = 0x16,
-  OP_XOR  = 0x17,
-  OP_NAND = 0x18,
-  OP_NOR  = 0x19,
-  OP_NXOR = 0x1A,
+  OP_ADD     = 0x10,
+  OP_SUB     = 0x11,
+  OP_MUL     = 0x12,
+  OP_DIV     = 0x13,
+  OP_MOD     = 0x14,
+  OP_AND     = 0x15,
+  OP_OR      = 0x16,
+  OP_XOR     = 0x17,
+  OP_NAND    = 0x18,
+  OP_NOR     = 0x19,
+  OP_NXOR    = 0x1A,
 
-  OP_JMP   = 0x1F,
+  OP_JMP     = 0x1F,
 
-  OP_CMPEQ  = 0x20,
-  OP_CMPNEQ = 0x21,
-  OP_CMPLT  = 0x22,
-  OP_CMPNLT = 0x23,
-  OP_CMPGT  = 0x24,
-  OP_CMPNGT = 0x25,
-  OP_CMPLE  = 0x26,
-  OP_CMPNLE = 0x27,
-  OP_CMPGE  = 0x28,
-  OP_CMPNGE = 0x29,
+  OP_CMPEQ   = 0x20,
+  OP_CMPNEQ  = 0x21,
+  OP_CMPLT   = 0x22,
+  OP_CMPNLT  = 0x23,
+  OP_CMPGT   = 0x24,
+  OP_CMPNGT  = 0x25,
+  OP_CMPLE   = 0x26,
+  OP_CMPNLE  = 0x27,
+  OP_CMPGE   = 0x28,
+  OP_CMPNGE  = 0x29,
 
-  OP_JCF    = 0x30,
-  OP_JCT    = 0x31,
+  OP_JCF     = 0x30,
+  OP_JCT     = 0x31,
 
   OP_POP     = 0x40,
   OP_PUSH    = 0x41,
@@ -86,6 +87,8 @@ ModlOpcode
   OP_ENVUPKR = 0x49,
   OP_ENVUPKC = 0x4A,
   OP_ENVUPKT = 0x4B,
+  OP_ENVPUSH = 0x4C,
+  OP_ENVPOP  = 0x4D,
 };
 
 static char const * const instructions_names_table[256] =
@@ -97,8 +100,8 @@ static char const * const instructions_names_table[256] =
   [0x04] = "LOADC",
   [0x05] = "TBLGETR",
   [0x06] = "TBLGETC",
-  [0x07] = "SETR",
-  [0x08] = "SETC",
+  // [0x07] = "SETR", // removed
+  // [0x08] = "SETC", // removed
   [0x09] = "CALLR",
   [0x0A] = "CALLC",
   [0x0B] = "LOADD",
@@ -144,20 +147,34 @@ static char const * const instructions_names_table[256] =
   [0x49] = "ENVUPKR",
   [0x4A] = "ENVUPKC",
   [0x4B] = "ENVUPKT",
+  [0x4C] = "ENVPUSH",
+  [0x4D] = "ENVPOP",
 };
 
 
 enum __attribute__ ((__packed__))
 ModlType
 {
-  ModlNil      = 0,
-  ModlBoolean  = 1,
-  ModlInteger  = 2,
-  ModlFloating = 3,
-  ModlString   = 4,
-  ModlTable    = 5,
-  ModlFunction = 6,
+  ModlTypeNil      = 0,
+  ModlTypeBoolean  = 1,
+  ModlTypeInteger  = 2,
+  ModlTypeFloating = 3,
+  ModlTypeString   = 4,
+  ModlTypeTable    = 5,
+  ModlTypeFunction = 6,
 };
+
+static char const * const modl_types_names_table[256] =
+{
+  [ModlTypeNil]      = "Nil",
+  [ModlTypeBoolean]  = "Boolean",
+  [ModlTypeInteger]  = "Integer",
+  [ModlTypeFloating] = "Floating",
+  [ModlTypeString]   = "String",
+  [ModlTypeTable]    = "Table",
+  [ModlTypeFunction] = "Function",
+};
+
 
 struct ModlObject
 {
@@ -169,14 +186,18 @@ struct ModlObject
     double floating;
     char * string;
 
-    struct ModlTableNode
+    struct ModlTable
     {
-      struct ModlObject const * key;
-      struct ModlObject * value;
-      struct ModlTableNode * next;
-    } *table;
+      struct ModlTableNode
+      {
+        struct ModlObject const * key;
+        struct ModlObject * value;
+        struct ModlTableNode * next;
+      } *integer_nodes, *string_nodes
+      , *last_consecutive_integer_node;
+    } table;
 
-    struct ModlFunctionInfo
+    struct ModlTypeFunctionInfo
     {
       bool is_external;
       uint64_t position;
@@ -193,7 +214,7 @@ void display_modl_object(struct ModlObject const * object);
 bool modl_object_release(struct ModlObject * const self)
 {
   if (NULL == self) return TRUE;
-  if (self->type == ModlNil) return TRUE;
+  if (self->type == ModlTypeNil) return TRUE;
 
   self->instances_count -= 1;
 
@@ -211,22 +232,38 @@ bool modl_object_release(struct ModlObject * const self)
 
     switch (self->type)
     {
-      case ModlString: free(self->value.string); break;
+      case ModlTypeString: free(self->value.string); break;
 
-      case ModlTable:
+      case ModlTypeTable:
       {
-        struct ModlTableNode * node = self->value.table;
-        while (NULL != node->key)
         {
-          /* discard const to free object's memory */
-          modl_object_release((struct ModlObject *) node->key);
-          modl_object_release(node->value);
+          struct ModlTableNode * node = self->value.table.integer_nodes;
+          while (NULL != node->key)
+          {
+            /* discard const to free object's memory */
+            modl_object_release((struct ModlObject *) node->key);
+            modl_object_release(node->value);
 
-          struct ModlTableNode * tmp = node;
-          node = node->next;
-          free(tmp);
+            struct ModlTableNode * tmp = node;
+            node = node->next;
+            free(tmp);
+          }
+          free(node);
         }
-        free(node);
+        {
+          struct ModlTableNode * node = self->value.table.string_nodes;
+          while (NULL != node->key)
+          {
+            /* discard const to free object's memory */
+            modl_object_release((struct ModlObject *) node->key);
+            modl_object_release(node->value);
+
+            struct ModlTableNode * tmp = node;
+            node = node->next;
+            free(tmp);
+          }
+          free(node);
+        }
       } break;
 
       default: break;
@@ -242,15 +279,32 @@ bool modl_object_release(struct ModlObject * const self)
 bool modl_object_release_tmp(struct ModlObject * const self)
 {
   if (NULL == self) return TRUE;
+  if (ModlTypeNil == self->type) return TRUE;
 
   self->instances_count += 1;
   return modl_object_release(self);
+}
+
+struct ModlObject * modl_object_disown(struct ModlObject * const self)
+{
+  if (NULL == self) return NULL;
+  if (ModlTypeNil == self->type) return self;
+
+  self->instances_count -= 1;
+  if (self->instances_count >= (size_t)-1)
+  {
+    printf("\x1b[31;1m  %s  --> %ld\x1b[0m\n", "Liek watafak? instances count is negative?!?!", self->instances_count);
+    exit(EXIT_FAILURE);
+  }
+
+  return self;
 }
 
 
 struct ModlObject * modl_object_take(struct ModlObject * const self)
 {
   if (NULL == self) return NULL;
+  if (ModlTypeNil == self->type) return self;
   self->instances_count += 1;
   return self;
 }
@@ -270,53 +324,75 @@ void display_modl_object(struct ModlObject const * object)
     return;
   }
 
+  printf("{%lu}", object->instances_count);
   switch (object->type)
   {
-    case ModlNil:
+    case ModlTypeNil:
     {
       printf("\x1b[37;1m%s\x1b[0m", "nil");
     } break;
 
-    case ModlBoolean:
+    case ModlTypeBoolean:
     {
       printf("%s", object->value.boolean ? "true" : "false");
     } break;
 
-    case ModlInteger:
+    case ModlTypeInteger:
     {
       printf("\x1b[33m%ld\x1b[0m", object->value.integer);
     } break;
 
-    case ModlFloating:
+    case ModlTypeFloating:
     {
-      printf("\x1b[33m%lf\x1b[0m", object->value.floating);
+      printf("\x1b[33m%.17g\x1b[0m", object->value.floating);
     } break;
 
-    case ModlString:
+    case ModlTypeString:
     {
       printf("\x1b[32m\"%s\"\x1b[0m", object->value.string);
     } break;
 
-    case ModlTable:
+    case ModlTypeTable:
     {
       printf("%c", '[');
 
-      struct ModlTableNode const * node = object->value.table;
-      while (NULL != node->key)
       {
-        display_modl_object(node->key);
-        printf("%s", ": ");
-        display_modl_object(node->value);
+        int64_t last_key = -1;
+        struct ModlTableNode const * node = object->value.table.integer_nodes;
+        while (NULL != node->key)
+        {
+          if (node->key->value.integer != last_key + 1)
+          {
+            display_modl_object(node->key);
+            printf("%s", ": ");
+          }
+          display_modl_object(node->value);
 
-        if (NULL != node->next->key)
-          printf("%s", "; ");
+          if (NULL != node->next->key)
+            printf("%s", "; ");
 
-        node = node->next;
+          last_key = node->key->value.integer;
+          node = node->next;
+        }
+      }
+      {
+        struct ModlTableNode const * node = object->value.table.string_nodes;
+        while (NULL != node->key)
+        {
+          display_modl_object(node->key);
+          printf("%s", ": ");
+          display_modl_object(node->value);
+
+          if (NULL != node->next->key)
+            printf("%s", "; ");
+
+          node = node->next;
+        }
       }
       printf("%c", ']');
     } break;
 
-    case ModlFunction:
+    case ModlTypeFunction:
     {
       printf("\x1b[33;1m&%04lx\x1b[0m", object->value.fun.position);
     } break;
@@ -327,14 +403,14 @@ void display_modl_object(struct ModlObject const * object)
 struct ModlObject * modl_nil()
 {
   static struct ModlObject nil_object = {
-    .type = ModlNil,
+    .type = ModlTypeNil,
     .instances_count = 1,
   };
 
   return &nil_object;
 
   // struct ModlObject * object = (struct ModlObject*) malloc(sizeof (struct ModlObject));
-  // object->type = ModlNil;
+  // object->type = ModlTypeNil;
   // object->instances_count = 0;
   // return object;
 }
@@ -350,8 +426,10 @@ struct ModlObject * modl_nil_new()
 struct ModlObject * modl_table()
 {
   struct ModlObject * object = (struct ModlObject*) malloc(sizeof (struct ModlObject));
-  object->type = ModlTable;
-  object->value.table = (struct ModlTableNode *) calloc(1, sizeof (struct ModlTableNode));
+  object->type = ModlTypeTable;
+  object->value.table.integer_nodes = (struct ModlTableNode *) calloc(1, sizeof (struct ModlTableNode));
+  object->value.table.last_consecutive_integer_node = NULL;
+  object->value.table.string_nodes = (struct ModlTableNode *) calloc(1, sizeof (struct ModlTableNode));
   object->instances_count = 0;
   return object;
 }
@@ -373,13 +451,13 @@ bool modl_object_equals(struct ModlObject const * const self, struct ModlObject 
 
   switch (self->type)
   {
-    case ModlNil: return TRUE;
-    case ModlBoolean: return self->value.boolean == other->value.boolean;
-    case ModlInteger: return self->value.integer == other->value.integer;
-    case ModlFloating: return self->value.floating == other->value.floating;
-    case ModlString: return 0 == strcmp(self->value.string, other->value.string);
-    case ModlTable: return FALSE;
-    case ModlFunction:
+    case ModlTypeNil: return TRUE;
+    case ModlTypeBoolean: return self->value.boolean == other->value.boolean;
+    case ModlTypeInteger: return self->value.integer == other->value.integer;
+    case ModlTypeFloating: return self->value.floating == other->value.floating;
+    case ModlTypeString: return 0 == strcmp(self->value.string, other->value.string);
+    case ModlTypeTable: return FALSE;
+    case ModlTypeFunction:
       return self->value.fun.is_external == other->value.fun.is_external
           && self->value.fun.position    == other->value.fun.position
           && self->value.fun.context     == other->value.fun.context;
@@ -392,7 +470,7 @@ bool modl_object_equals(struct ModlObject const * const self, struct ModlObject 
 struct ModlObject * bool_to_modl(bool data)
 {
   struct ModlObject* object = (struct ModlObject*) malloc(sizeof (struct ModlObject));
-  object->type = ModlBoolean;
+  object->type = ModlTypeBoolean;
   object->value.boolean = data;
   object->instances_count = 0;
   return object;
@@ -401,7 +479,7 @@ struct ModlObject * bool_to_modl(bool data)
 struct ModlObject * int_to_modl(int64_t data)
 {
   struct ModlObject* object = (struct ModlObject*) malloc(sizeof (struct ModlObject));
-  object->type = ModlInteger;
+  object->type = ModlTypeInteger;
   object->value.integer = data;
   object->instances_count = 0;
   return object;
@@ -410,7 +488,7 @@ struct ModlObject * int_to_modl(int64_t data)
 struct ModlObject * double_to_modl(double data)
 {
   struct ModlObject* object = (struct ModlObject*) malloc(sizeof (struct ModlObject));
-  object->type = ModlFloating;
+  object->type = ModlTypeFloating;
   object->value.floating = data;
   object->instances_count = 0;
   return object;
@@ -419,7 +497,7 @@ struct ModlObject * double_to_modl(double data)
 struct ModlObject * str_to_modl(char const * data)
 {
   struct ModlObject* object = (struct ModlObject*) malloc(sizeof (struct ModlObject));
-  object->type = ModlString;
+  object->type = ModlTypeString;
   object->value.string = strcpy(malloc((strlen(data) + 1) * sizeof(char)), data);
   object->instances_count = 0;
   return object;
@@ -428,7 +506,7 @@ struct ModlObject * str_to_modl(char const * data)
 struct ModlObject * ifun_to_modl(struct Environment * environment, uint64_t position)
 {
   struct ModlObject* object = (struct ModlObject*) malloc(sizeof (struct ModlObject));
-  object->type = ModlFunction;
+  object->type = ModlTypeFunction;
   object->value.fun.is_external = FALSE;
   object->value.fun.position = position;
   object->value.fun.context = environment;
@@ -439,7 +517,7 @@ struct ModlObject * ifun_to_modl(struct Environment * environment, uint64_t posi
 struct ModlObject * efun_to_modl(uint64_t pointer)
 {
   struct ModlObject* object = (struct ModlObject*) malloc(sizeof (struct ModlObject));
-  object->type = ModlFunction;
+  object->type = ModlTypeFunction;
   object->value.fun.is_external = TRUE;
   object->value.fun.position = pointer;
   object->value.fun.context = NULL;
@@ -451,28 +529,28 @@ struct ModlObject * efun_to_modl(uint64_t pointer)
 bool modl_to_bool(struct ModlObject const * object)
 {
   if (NULL == object) return FALSE;
-  // if (ModlBoolean != object->type) return TRUE;
+  // if (ModlTypeBoolean != object->type) return TRUE;
   return (object->value.boolean ? TRUE : FALSE);
 }
 
 int64_t modl_to_int(struct ModlObject const * object)
 {
   if (NULL == object) return 0;
-  // if (ModlInteger != object->type) return 0;
+  // if (ModlTypeInteger != object->type) return 0;
   return object->value.integer;
 }
 
 double modl_to_double(struct ModlObject const * object)
 {
   if (NULL == object) return 0.0;
-  // if (ModlFloating != object->type) return 0.0;
+  // if (ModlTypeFloating != object->type) return 0.0;
   return object->value.floating;
 }
 
 char const * modl_to_str(struct ModlObject const * object)
 {
   if (NULL == object) return NULL;
-  if (ModlString != object->type) return NULL;
+  if (ModlTypeString != object->type) return NULL;
   return object->value.string;
 }
 
@@ -493,15 +571,15 @@ struct ModlObject * modl_object_copy_value(struct ModlObject const * const self)
 
   switch (self->type)
   {
-    case ModlNil: return modl_nil();
-    case ModlBoolean: return bool_to_modl(self->value.boolean);
-    case ModlInteger: return int_to_modl(self->value.integer);
-    case ModlFloating: return double_to_modl(self->value.floating);
-    case ModlString: return str_to_modl(strcpy(malloc((strlen(self->value.string) + 1) * sizeof (char)), self->value.string));
-    case ModlTable:
+    case ModlTypeNil: return modl_nil();
+    case ModlTypeBoolean: return bool_to_modl(self->value.boolean);
+    case ModlTypeInteger: return int_to_modl(self->value.integer);
+    case ModlTypeFloating: return double_to_modl(self->value.floating);
+    case ModlTypeString: return str_to_modl(strcpy(malloc((strlen(self->value.string) + 1) * sizeof (char)), self->value.string));
+    case ModlTypeTable:
     {
       // TODO: implement
-      printf("\x1b[31;1m  %s\x1b[0m\n", "ModlTable copy by value is not implemented");
+      printf("\x1b[31;1m  %s\x1b[0m\n", "ModlTypeTable copy by value is not implemented");
       exit(EXIT_FAILURE);
       return NULL;
 
@@ -509,7 +587,7 @@ struct ModlObject * modl_object_copy_value(struct ModlObject const * const self)
       // obj->value.table = self->value.table;
       // return obj;
     }
-    case ModlFunction:
+    case ModlTypeFunction:
     {
       struct ModlObject * obj = ifun_to_modl(self->value.fun.context, self->value.fun.position);
       obj->value.fun.is_external = self->value.fun.is_external;
@@ -536,12 +614,12 @@ struct ModlObject * modl_object_copy_ref(struct ModlObject * const self)
 
   switch (self->type)
   {
-    case ModlNil: return self; // modl_nil();
-    case ModlBoolean: return self; // bool_to_modl(self->value.boolean);
-    case ModlInteger: return self; // int_to_modl(self->value.integer);
-    case ModlFloating: return self; // double_to_modl(self->value.floating);
-    case ModlString: return self; // str_to_modl(strcpy(malloc((strlen(self->value.string) + 1) * sizeof (char)), self->value.string));
-    case ModlTable:
+    case ModlTypeNil: return self; // modl_nil();
+    case ModlTypeBoolean: return self; // bool_to_modl(self->value.boolean);
+    case ModlTypeInteger: return self; // int_to_modl(self->value.integer);
+    case ModlTypeFloating: return self; // double_to_modl(self->value.floating);
+    case ModlTypeString: return self; // str_to_modl(strcpy(malloc((strlen(self->value.string) + 1) * sizeof (char)), self->value.string));
+    case ModlTypeTable:
     {
       // self->instances_count += 1;
       return self;
@@ -550,7 +628,7 @@ struct ModlObject * modl_object_copy_ref(struct ModlObject * const self)
       // obj->value.table = self->value.table;
       // return obj;
     }
-    case ModlFunction:
+    case ModlTypeFunction:
     {
       struct ModlObject * obj = ifun_to_modl(self->value.fun.context, self->value.fun.position);
       obj->value.fun.is_external = self->value.fun.is_external;
@@ -571,9 +649,13 @@ bool modl_table_has_k(struct ModlObject * const self, struct ModlObject const * 
     exit(EXIT_FAILURE);
   }
 
-  if (ModlTable != self->type) return FALSE;
+  if (ModlTypeTable != self->type) return FALSE;
 
-  struct ModlTableNode * node = self->value.table;
+  struct ModlTableNode * node =
+    key->type == ModlTypeInteger
+      ? self->value.table.integer_nodes
+      : self->value.table.string_nodes;
+
   while (NULL != node->key)
   {
     if (modl_object_equals(node->key, key))
@@ -592,19 +674,41 @@ void modl_table_insert_kv(struct ModlObject * const self, struct ModlObject * co
     exit(EXIT_FAILURE);
   }
 
-  if (ModlTable != self->type)
+  if (ModlTypeTable != self->type)
   {
-    printf("\x1b[31;1m  %s\x1b[0m\n", "((ModlObject *) self)->type != ModlTable!");
+    printf("\x1b[31;1m  %s\x1b[0m\n", "((ModlObject *) self)->type != ModlTypeTable!");
     exit(EXIT_FAILURE);
   }
 
-  if (ModlString != key->type && ModlInteger != key->type)
+  if (ModlTypeString != key->type && ModlTypeInteger != key->type)
   {
-    printf("\x1b[31;1m  %s\x1b[0m\n", "((ModlObject *) key)->type not in (ModlString, ModlInteger)!");
+    printf("\x1b[31;1m  %s\x1b[0m\n", "((ModlObject *) key)->type not in (ModlTypeString, ModlTypeInteger)!");
     exit(EXIT_FAILURE);
   }
 
-  struct ModlTableNode * node = self->value.table;
+  if (ModlTypeInteger == key->type && NULL != self->value.table.last_consecutive_integer_node
+      && self->value.table.last_consecutive_integer_node->key->value.integer + 1 == key->value.integer)
+  {
+    struct ModlTableNode * cn = self->value.table.last_consecutive_integer_node;
+    struct ModlTableNode * ins_next = (struct ModlTableNode *) malloc(sizeof (struct ModlTableNode));
+    ins_next->key = modl_object_take(modl_object_copy_ref(key));
+    ins_next->value = modl_object_take(modl_object_copy_ref(value));
+    ins_next->next = cn->next;
+    cn->next = ins_next;
+
+    self->value.table.last_consecutive_integer_node = ins_next;
+    while (NULL != self->value.table.last_consecutive_integer_node->next->key
+        && (self->value.table.last_consecutive_integer_node->next->key->value.integer
+            == self->value.table.last_consecutive_integer_node->key->value.integer + 1))
+      self->value.table.last_consecutive_integer_node = self->value.table.last_consecutive_integer_node->next;
+    return;
+  }
+
+  struct ModlTableNode * node =
+    key->type == ModlTypeInteger
+      ? self->value.table.integer_nodes
+      : self->value.table.string_nodes;
+
   while (NULL != node->key)
   {
     if (modl_object_equals(node->key, key))
@@ -613,8 +717,35 @@ void modl_table_insert_kv(struct ModlObject * const self, struct ModlObject * co
       node->value = modl_object_take(modl_object_copy_ref(value));
       return;
     }
+    else if (ModlTypeInteger == key->type && key->value.integer < node->key->value.integer)
+    {
+      struct ModlTableNode * ins_next = (struct ModlTableNode *) malloc(sizeof (struct ModlTableNode));
+      ins_next->key = modl_object_take(modl_object_copy_ref(key));
+      ins_next->value = modl_object_take(modl_object_copy_ref(value));
+      ins_next->next = node->next;
+      node->next = ins_next;
+
+      if (key->value.integer == 0)
+        self->value.table.last_consecutive_integer_node = ins_next;
+
+      if (NULL == self->value.table.last_consecutive_integer_node)
+        return;
+
+      while (NULL != self->value.table.last_consecutive_integer_node->next->key
+          && (self->value.table.last_consecutive_integer_node->next->key->value.integer
+              == self->value.table.last_consecutive_integer_node->key->value.integer + 1))
+        self->value.table.last_consecutive_integer_node = self->value.table.last_consecutive_integer_node->next;
+      return;
+    }
     node = node->next;
   }
+
+  if (ModlTypeInteger == key->type && key->value.integer == 0)
+    self->value.table.last_consecutive_integer_node = node;
+  else if (ModlTypeInteger == key->type && NULL != self->value.table.last_consecutive_integer_node
+    && self->value.table.last_consecutive_integer_node->key->value.integer + 1 == key->value.integer)
+    self->value.table.last_consecutive_integer_node = node;
+
 
   node->key = modl_object_take(modl_object_copy_ref(key));
   node->value = modl_object_take(modl_object_copy_ref(value));
@@ -623,11 +754,10 @@ void modl_table_insert_kv(struct ModlObject * const self, struct ModlObject * co
 
 void modl_table_push_v(struct ModlObject * const self, struct ModlObject * const value)
 {
-  struct ModlObject * key = int_to_modl(0);
-  while (modl_table_has_k(self, key))
-    key->value.integer += 1;
-
-  modl_table_insert_kv(self, key, value);
+  struct ModlTableNode const * ln = self->value.table.last_consecutive_integer_node;
+  int64_t next_id = 0;
+  if (NULL != ln) next_id = ln->key->value.integer + 1;
+  modl_table_insert_kv(self, int_to_modl(next_id), value);
 }
 
 struct ModlObject * modl_table_get_v(struct ModlObject const * const self, struct ModlObject const * const key)
@@ -638,13 +768,17 @@ struct ModlObject * modl_table_get_v(struct ModlObject const * const self, struc
     exit(EXIT_FAILURE);
   }
 
-  if (ModlTable != self->type)
+  if (ModlTypeTable != self->type)
   {
-    printf("\x1b[31;1m  %s\x1b[0m\n", "((ModlObject *) self)->type != ModlTable!");
+    printf("\x1b[31;1m  %s\x1b[0m\n", "((ModlObject *) self)->type != ModlTypeTable!");
     exit(EXIT_FAILURE);
   }
 
-  struct ModlTableNode const * node = self->value.table;
+  struct ModlTableNode const * node =
+    key->type == ModlTypeInteger
+      ? self->value.table.integer_nodes
+      : self->value.table.string_nodes;
+
   while (NULL != node->key)
   {
     if (modl_object_equals(node->key, key))
@@ -662,20 +796,24 @@ struct ModlObject * modl_maybe_cast(struct ModlObject * const object, enum ModlT
   if (NULL == object) return NULL;
 
   // printf("\x1b[32m  casting object from %d to %d\x1b[0m\n", object->type, target_type);
-  if (object->type == target_type) return modl_object_copy_ref(object);
+  if (object->type == target_type) return object;
 
   switch (object->type)
   {
-    case ModlInteger: switch(target_type)
+    case ModlTypeInteger: switch(target_type)
     {
-      case ModlFloating: return double_to_modl((double) modl_to_int(object));
+      case ModlTypeFloating: return double_to_modl((double) modl_to_int(object));
       default: break;
     } break;
     default: break;
   }
 
   {
-    printf("\x1b[31;1m  Cannot cast object of type %d to %d\x1b[0m\n", object->type, target_type);
+    printf(
+      "\x1b[31;1m  Cannot cast object of type %s to %s\x1b[0m\n",
+      modl_types_names_table[object->type],
+      modl_types_names_table[target_type]
+    );
     exit(EXIT_FAILURE);
   }
 
@@ -787,9 +925,9 @@ struct Sebo modl_encode_sebo(struct ModlObject * object)
 
   switch (object->type)
   {
-    case ModlNil: return (struct Sebo) { array_of__0, 1, object };
-    case ModlBoolean: return (struct Sebo) { object->value.boolean ? array_of__2 : array_of__1, 1, object };
-    case ModlInteger:
+    case ModlTypeNil: return (struct Sebo) { array_of__0, 1, object };
+    case ModlTypeBoolean: return (struct Sebo) { object->value.boolean ? array_of__2 : array_of__1, 1, object };
+    case ModlTypeInteger:
     {
       uint64_t value = (uint64_t) modl_to_int(object);
       struct Sebo ret = { malloc(9 * (sizeof (byte))), 9, object };
@@ -884,13 +1022,30 @@ struct ModlObject * (* vm_get_external_function(struct VMState const * const sel
   {
     printf(
       "\x1b[31;1m  %s: id=%lu\x1b[0m\n",
-      "  external function with given id does not exists",
+      "  external function with given id does not exist",
       id
     );
     exit(EXIT_FAILURE);
   }
 
   return self->external_functions[id];
+}
+
+struct ModlObject * vm_find_external_function(struct VMState const * const self, struct ModlObject * (*f) (struct VMState *))
+{
+  uint64_t id = 0;
+  while (id < self->efc && self->external_functions[id] != f) ++id;
+
+  if (id >= self->efc)
+  {
+    printf(
+      "\x1b[31;1m  %s\x1b[0m\n",
+      "  given external function is not registered"
+    );
+    exit(EXIT_FAILURE);
+  }
+
+  return efun_to_modl(id);
 }
 
 
@@ -918,6 +1073,7 @@ struct InstructionParametersTemplate instruction_parameters_templates[256] =
 {
   [OP_NOP]     = {{ TP_EMPTY, }},
   [OP_RET]     = {{ TP_EMPTY, }},
+  [OP_MOV]     = {{ TP_REGSP, }},
 
   [OP_LOADC]   = {{ TP_REGAL, TP_SEBO, }},
   [OP_TBLGETR] = {{ TP_REGSP, }},
@@ -938,6 +1094,10 @@ struct InstructionParametersTemplate instruction_parameters_templates[256] =
   [OP_CMPNLT]  = {{ TP_REGSP, }},
   [OP_CMPGT]   = {{ TP_REGSP, }},
   [OP_CMPNGT]  = {{ TP_REGSP, }},
+  [OP_CMPLE]   = {{ TP_REGSP, }},
+  [OP_CMPNLE]  = {{ TP_REGSP, }},
+  [OP_CMPGE]   = {{ TP_REGSP, }},
+  [OP_CMPNGE]  = {{ TP_REGSP, }},
 
   [OP_JCF]     = {{ TP_REGAL, TP_INT64, }},
   [OP_JCT]     = {{ TP_REGAL, TP_INT64, }},
@@ -1031,9 +1191,9 @@ static struct Instruction decode_instruction(struct VMState * state)
   return instruction;
 }
 
-static void display_instruction(struct Instruction instruction)
+static void instruction_display(struct VMState * vm, struct Instruction instruction)
 {
-  printf("\x1b[36m%s\x1b[0m", instructions_names_table[instruction.opcode]);
+  printf("\x1b[36m%-8s\x1b[0m", instructions_names_table[instruction.opcode]);
   struct InstructionParametersTemplate template = instruction_parameters_templates[instruction.opcode];
 
   if (template.p[0] != TP_EMPTY)
@@ -1046,9 +1206,19 @@ static void display_instruction(struct Instruction instruction)
     {
       case TP_REGAL:
         printf("\x1b[37;1mR%d\x1b[0m", instruction.a[i].r[0]);
+        printf("%c", '{');
+        display_modl_object(vm->registers[instruction.a[i].r[0]]);
+        printf("%c", '}');
         break;
       case TP_REGSP:
-        printf("\x1b[37;1mR%d\x1b[0m, \x1b[37;1mR%d\x1b[0m", instruction.a[i].r[0], instruction.a[i].r[1]);
+        printf("\x1b[37;1mR%d\x1b[0m", instruction.a[i].r[0]);
+        printf("%c", '{');
+        display_modl_object(vm->registers[instruction.a[i].r[0]]);
+        printf("%c", '}');
+        printf(", \x1b[37;1mR%d\x1b[0m", instruction.a[i].r[1]);
+        printf("%c", '{');
+        display_modl_object(vm->registers[instruction.a[i].r[1]]);
+        printf("%c", '}');
         break;
       case TP_INT64:
         printf("[%" PRId64 "]", instruction.a[i].i64);
@@ -1064,16 +1234,31 @@ static void display_instruction(struct Instruction instruction)
   printf("%c", '\n');
 }
 
+void instruction_release(struct Instruction instruction)
+{
+  struct InstructionParametersTemplate template = instruction_parameters_templates[instruction.opcode];
+  for (byte i = 0; i < 4; ++i)
+  {
+    switch (template.p[i])
+    {
+      case TP_SEBO:
+        // printf("%s\n", "  releasing instruction's temporary object");
+        modl_object_release_tmp(instruction.a[i].object);
+      default: break;
+    }
+  }
+}
 
 
-static struct ModlObject * vm_reg_read(struct VMState * const state, byte r)
+struct ModlObject * vm_reg_read(struct VMState * const state, byte r)
 {
   state->ram.read_after_rewrite[r] = TRUE;
   return state->registers[r];
 }
 
-static void vm_reg_write(struct VMState * const state, byte r, struct ModlObject * val)
+void vm_reg_write(struct VMState * const state, byte r, struct ModlObject * val)
 {
+  if (not VM_SETTING_SILENT)
   if (not state->ram.read_after_rewrite[r])
   {
     printf(
@@ -1089,15 +1274,65 @@ static void vm_reg_write(struct VMState * const state, byte r, struct ModlObject
   /** make object copy before releasing
    *    to avoid accidental memory freeing when `val == state->registers[r]`
   **/
-  state->registers[r]->instances_count -= 1;
-  struct ModlObject * copy = modl_object_take(modl_object_copy_ref(val));
-  modl_object_release_tmp(state->registers[r]);
+  struct ModlObject * copy = modl_object_take(val);
+  modl_object_release(state->registers[r]);
   state->registers[r] = copy;
 }
 
-static void vm_reg_write_tmp(struct VMState * const state, byte r, struct ModlObject * val)
+
+struct ModlObject * run(struct VMState * const state);
+struct ModlObject * vm_call_function(struct VMState * const state, struct ModlObject const * obj)
 {
-  vm_reg_write(state, r, val);
+  if (ModlTypeFunction != obj->type)
+  {
+    printf("\x1b[31;1m  Object of type %s is not callable\x1b[0m\n", modl_types_names_table[obj->type]);
+    exit(EXIT_FAILURE);
+  }
+
+  if (state->csp + 1 >= state->max_count_call_stack)
+  {
+    printf(
+      "\x1b[31;1m  %s: call_stack_max_size=%lu\x1b[0m\n",
+      "  maximum call stack size exceeded",
+      state->max_count_call_stack
+    );
+    exit(EXIT_FAILURE);
+  }
+
+  struct Environment * env = calloc(1, sizeof (struct Environment));
+  env->parent = obj->value.fun.context;
+  env->vartable = modl_table_new();
+  state->call_stack[++state->csp] = (struct CallFrame) {
+    .return_address = state->ip,
+    .environment = env,
+  };
+
+  struct ModlObject * ret;
+
+  if (obj->value.fun.is_external)
+  {
+    ret = vm_get_external_function(state, obj->value.fun.position)(state);
+    if (NULL == ret)
+    {
+      if (not VM_SETTING_SILENT)
+        printf("\x1b[33;1m%s\x1b[0m", "    forcing nil as output");
+      ret = modl_nil_new();
+    }
+    vm_reg_write(state, REG(0), ret);
+  }
+  else
+  {
+    state->ip = obj->value.fun.position;
+    ret = run(state);
+  }
+
+  modl_object_release(env->vartable);
+  free(env);
+  state->ip = state->call_stack[state->csp].return_address;
+  state->csp -= 1;
+
+  modl_object_release_tmp((struct ModlObject *) obj);
+  return ret;
 }
 
 
@@ -1105,6 +1340,7 @@ struct ModlObject * run(struct VMState * const state)
 {
   while (TRUE)
   {
+    if (not VM_SETTING_SILENT)
     {
       // printf("%s", "Registers: [ ");
       // for (size_t i = 0; i < VM_SETTING_REGITERS_COUNT; ++i)
@@ -1133,9 +1369,9 @@ struct ModlObject * run(struct VMState * const state)
       // printf("%c", '\n');
     }
 
-    // printf("[%04lx] ", state->ip);
+    if (not VM_SETTING_SILENT) printf("[%04lx] ", state->ip);
     struct Instruction instruction = decode_instruction(state);
-    // display_instruction(instruction);
+    if (not VM_SETTING_SILENT) instruction_display(state, instruction);
 
     switch (instruction.opcode)
     {
@@ -1143,19 +1379,12 @@ struct ModlObject * run(struct VMState * const state)
 
       case OP_RET:
       {
-        modl_object_release(state->call_stack[state->csp].environment->vartable);
+        return vm_reg_read(state, REG(0));
+      } break;
 
-        if (0 == state->csp)
-        {
-          for (byte i = 1; i < VM_SETTING_REGITERS_COUNT; ++i)
-            modl_object_release(state->registers[i]);
-          return state->registers[0];
-        }
-
-        free(state->call_stack[state->csp].environment);
-        state->ip = state->call_stack[state->csp].return_address - instruction.byte_length;
-
-        state->csp -= 1;
+      case OP_MOV:
+      {
+        vm_reg_write(state, instruction.a[0].r[0], vm_reg_read(state, instruction.a[0].r[1]));
       } break;
 
       case OP_LOADC:
@@ -1180,45 +1409,13 @@ struct ModlObject * run(struct VMState * const state)
       case OP_CALLR:
       {
         struct ModlObject const * const obj = vm_reg_read(state, instruction.a[0].r[0]);
-
-        if (ModlFunction != obj->type)
-        {
-          printf("\x1b[31;1m  Object of type %d is not callable\x1b[0m\n", obj->type);
-          exit(EXIT_FAILURE);
-        }
-
-        if (state->csp + 1 >= state->max_count_call_stack)
-        {
-          printf(
-            "\x1b[31;1m  %s: call_stack_max_size=%lu\x1b[0m\n",
-            "  maximum call stack size exceeded",
-            state->max_count_call_stack
-          );
-          exit(EXIT_FAILURE);
-        }
-
-        if (obj->value.fun.is_external)
-        {
-          struct ModlObject * ret = vm_get_external_function(state, obj->value.fun.position)(state);
-          if (NULL != ret)
-            vm_reg_write_tmp(state, REG(0), ret);
-          break;
-        }
-
-        struct Environment * env = calloc(1, sizeof (struct Environment));
-        env->parent = obj->value.fun.context;
-        env->vartable = modl_table_new();
-        state->call_stack[++state->csp] = (struct CallFrame) {
-          .return_address = state->ip + instruction.byte_length,
-          .environment = env,
-        };
-        state->ip = obj->value.fun.position - instruction.byte_length;
+        vm_call_function(state, obj);
       } break;
 
       case OP_LOADFUN:
       {
         struct Environment * env = state->call_stack[state->csp].environment;
-        vm_reg_write_tmp(state, instruction.a[0].r[0], ifun_to_modl(env, state->ip + instruction.a[1].i64));
+        vm_reg_write(state, instruction.a[0].r[0], ifun_to_modl(env, state->ip + instruction.a[1].i64));
       } break;
 
       case OP_JMP: state->ip += instruction.a[0].i64 - instruction.byte_length; break;
@@ -1234,26 +1431,30 @@ struct ModlObject * run(struct VMState * const state)
       case OP_NAND:
       case OP_NOR:
       case OP_NXOR:
-      case OP_CMPEQ:
-      case OP_CMPNEQ:
       case OP_CMPLT:
       case OP_CMPNLT:
       case OP_CMPGT:
       case OP_CMPNGT:
+      case OP_CMPLE:
+      case OP_CMPNLE:
+      case OP_CMPGE:
+      case OP_CMPNGE:
       {
         byte const reg_dst = instruction.a[0].r[0];
         byte const reg_src = instruction.a[0].r[1];
 
-        struct ModlObject * obj_l = vm_reg_read(state, reg_dst);
-        struct ModlObject * obj_r = vm_reg_read(state, reg_src);
+        struct ModlObject * obj_l = modl_object_take(vm_reg_read(state, reg_dst));
+        struct ModlObject * obj_r = modl_object_take(vm_reg_read(state, reg_src));
 
-        if (ModlFloating == obj_l->type)
+        if (ModlTypeFloating == obj_l->type)
         {
-          obj_r = modl_maybe_cast(obj_r, ModlFloating);
+          modl_object_disown(obj_r);
+          obj_r = modl_object_take(modl_maybe_cast(obj_r, ModlTypeFloating));
         }
-        if (ModlFloating == obj_r->type)
+        if (ModlTypeFloating == obj_r->type)
         {
-          obj_l = modl_maybe_cast(obj_l, ModlFloating);
+          modl_object_disown(obj_l);
+          obj_l = modl_object_take(modl_maybe_cast(obj_l, ModlTypeFloating));
         }
 
         if (obj_l->type != obj_r->type)
@@ -1262,58 +1463,62 @@ struct ModlObject * run(struct VMState * const state)
           exit(EXIT_FAILURE);
         }
 
-        if (ModlInteger != obj_l->type && ModlFloating != obj_l->type)
+        if (ModlTypeInteger != obj_l->type && ModlTypeFloating != obj_l->type)
         {
           printf(
             "\x1b[31;1m  This operation requires operands of integer or floating types: %d <> %d/%d\x1b[0m\n",
-            obj_l->type, ModlInteger, ModlFloating
+            obj_l->type, ModlTypeInteger, ModlTypeFloating
           );
           exit(EXIT_FAILURE);
         }
 
-        switch (ModlInteger == obj_l->type)
+        switch (ModlTypeInteger == obj_l->type)
         {
           case TRUE: switch (instruction.opcode)
           {
-            case OP_ADD: vm_reg_write_tmp(state, reg_dst, int_to_modl(modl_to_int(obj_l) + modl_to_int(obj_r))); break;
-            case OP_SUB: vm_reg_write_tmp(state, reg_dst, int_to_modl(modl_to_int(obj_l) - modl_to_int(obj_r))); break;
-            case OP_MUL: vm_reg_write_tmp(state, reg_dst, int_to_modl(modl_to_int(obj_l) * modl_to_int(obj_r))); break;
-            case OP_DIV: vm_reg_write_tmp(state, reg_dst, double_to_modl((double)modl_to_int(obj_l) / (double)modl_to_int(obj_r))); break;
-            case OP_MOD: vm_reg_write_tmp(state, reg_dst, int_to_modl(modl_to_int(obj_l) % modl_to_int(obj_r))); break;
-            case OP_AND: vm_reg_write_tmp(state, reg_dst, int_to_modl(modl_to_int(obj_l) & modl_to_int(obj_r))); break;
-            case OP_OR: vm_reg_write_tmp(state, reg_dst, int_to_modl(modl_to_int(obj_l) | modl_to_int(obj_r))); break;
-            case OP_XOR: vm_reg_write_tmp(state, reg_dst, int_to_modl(modl_to_int(obj_l) ^ modl_to_int(obj_r))); break;
-            case OP_NAND: vm_reg_write_tmp(state, reg_dst, int_to_modl(~(modl_to_int(obj_l) & modl_to_int(obj_r)))); break;
-            case OP_NOR: vm_reg_write_tmp(state, reg_dst, int_to_modl(~(modl_to_int(obj_l) | modl_to_int(obj_r)))); break;
-            case OP_NXOR: vm_reg_write_tmp(state, reg_dst, int_to_modl(~(modl_to_int(obj_l) ^ modl_to_int(obj_r)))); break;
-            case OP_CMPEQ: vm_reg_write_tmp(state, reg_dst, bool_to_modl(modl_to_int(obj_l) == modl_to_int(obj_r))); break;
-            case OP_CMPNEQ: vm_reg_write_tmp(state, reg_dst, bool_to_modl(modl_to_int(obj_l) != modl_to_int(obj_r))); break;
-            case OP_CMPLT: vm_reg_write_tmp(state, reg_dst, bool_to_modl(modl_to_int(obj_l) < modl_to_int(obj_r))); break;
-            case OP_CMPNLT: vm_reg_write_tmp(state, reg_dst, bool_to_modl(!(modl_to_int(obj_l) < modl_to_int(obj_r)))); break;
-            case OP_CMPGT: vm_reg_write_tmp(state, reg_dst, bool_to_modl(modl_to_int(obj_l) > modl_to_int(obj_r))); break;
-            case OP_CMPNGT: vm_reg_write_tmp(state, reg_dst, bool_to_modl(!(modl_to_int(obj_l) > modl_to_int(obj_r)))); break;
+            case OP_ADD: vm_reg_write(state, reg_dst, int_to_modl(modl_to_int(obj_l) + modl_to_int(obj_r))); break;
+            case OP_SUB: vm_reg_write(state, reg_dst, int_to_modl(modl_to_int(obj_l) - modl_to_int(obj_r))); break;
+            case OP_MUL: vm_reg_write(state, reg_dst, int_to_modl(modl_to_int(obj_l) * modl_to_int(obj_r))); break;
+            case OP_DIV: vm_reg_write(state, reg_dst, double_to_modl((double)modl_to_int(obj_l) / (double)modl_to_int(obj_r))); break;
+            case OP_MOD: vm_reg_write(state, reg_dst, int_to_modl(modl_to_int(obj_l) % modl_to_int(obj_r))); break;
+            case OP_AND: vm_reg_write(state, reg_dst, int_to_modl(modl_to_int(obj_l) & modl_to_int(obj_r))); break;
+            case OP_OR: vm_reg_write(state, reg_dst, int_to_modl(modl_to_int(obj_l) | modl_to_int(obj_r))); break;
+            case OP_XOR: vm_reg_write(state, reg_dst, int_to_modl(modl_to_int(obj_l) ^ modl_to_int(obj_r))); break;
+            case OP_NAND: vm_reg_write(state, reg_dst, int_to_modl(~(modl_to_int(obj_l) & modl_to_int(obj_r)))); break;
+            case OP_NOR: vm_reg_write(state, reg_dst, int_to_modl(~(modl_to_int(obj_l) | modl_to_int(obj_r)))); break;
+            case OP_NXOR: vm_reg_write(state, reg_dst, int_to_modl(~(modl_to_int(obj_l) ^ modl_to_int(obj_r)))); break;
+            case OP_CMPLT: vm_reg_write(state, reg_dst, bool_to_modl(modl_to_int(obj_l) < modl_to_int(obj_r))); break;
+            case OP_CMPNLT: vm_reg_write(state, reg_dst, bool_to_modl(!(modl_to_int(obj_l) < modl_to_int(obj_r)))); break;
+            case OP_CMPGT: vm_reg_write(state, reg_dst, bool_to_modl(modl_to_int(obj_l) > modl_to_int(obj_r))); break;
+            case OP_CMPNGT: vm_reg_write(state, reg_dst, bool_to_modl(!(modl_to_int(obj_l) > modl_to_int(obj_r)))); break;
+            case OP_CMPLE: vm_reg_write(state, reg_dst, bool_to_modl(modl_to_int(obj_l) <= modl_to_int(obj_r))); break;
+            case OP_CMPNLE: vm_reg_write(state, reg_dst, bool_to_modl(!(modl_to_int(obj_l) <= modl_to_int(obj_r)))); break;
+            case OP_CMPGE: vm_reg_write(state, reg_dst, bool_to_modl(modl_to_int(obj_l) >= modl_to_int(obj_r))); break;
+            case OP_CMPNGE: vm_reg_write(state, reg_dst, bool_to_modl(!(modl_to_int(obj_l) >= modl_to_int(obj_r)))); break;
             default: break;
           } break;
 
           case FALSE: switch (instruction.opcode)
           {
-            case OP_ADD: vm_reg_write_tmp(state, reg_dst, double_to_modl(modl_to_double(obj_l) + modl_to_double(obj_r))); break;
-            case OP_SUB: vm_reg_write_tmp(state, reg_dst, double_to_modl(modl_to_double(obj_l) - modl_to_double(obj_r))); break;
-            case OP_MUL: vm_reg_write_tmp(state, reg_dst, double_to_modl(modl_to_double(obj_l) * modl_to_double(obj_r))); break;
-            case OP_DIV: vm_reg_write_tmp(state, reg_dst, double_to_modl(modl_to_double(obj_l) / modl_to_double(obj_r))); break;
-            case OP_MOD: vm_reg_write_tmp(state, reg_dst, double_to_modl(fmod(modl_to_double(obj_l), modl_to_double(obj_r)))); break;
-            // case OP_AND: vm_reg_write_tmp(state, reg_dst, double_to_modl(modl_to_double(obj_l) & modl_to_double(obj_r))); break;
-            // case OP_OR: vm_reg_write_tmp(state, reg_dst, double_to_modl(modl_to_double(obj_l) | modl_to_double(obj_r))); break;
-            // case OP_XOR: vm_reg_write_tmp(state, reg_dst, double_to_modl(modl_to_double(obj_l) ^ modl_to_double(obj_r))); break;
-            // case OP_NAND: vm_reg_write_tmp(state, reg_dst, double_to_modl(~(modl_to_double(obj_l) & modl_to_double(obj_r)))); break;
-            // case OP_NOR: vm_reg_write_tmp(state, reg_dst, double_to_modl(~(modl_to_double(obj_l) | modl_to_double(obj_r)))); break;
-            // case OP_NXOR: vm_reg_write_tmp(state, reg_dst, double_to_modl(~(modl_to_double(obj_l) ^ modl_to_double(obj_r)))); break;
-            case OP_CMPEQ: vm_reg_write_tmp(state, reg_dst, bool_to_modl(modl_to_double(obj_l) == modl_to_double(obj_r))); break;
-            case OP_CMPNEQ: vm_reg_write_tmp(state, reg_dst, bool_to_modl(modl_to_double(obj_l) != modl_to_double(obj_r))); break;
-            case OP_CMPLT: vm_reg_write_tmp(state, reg_dst, bool_to_modl(modl_to_double(obj_l) < modl_to_double(obj_r))); break;
-            case OP_CMPNLT: vm_reg_write_tmp(state, reg_dst, bool_to_modl(!(modl_to_double(obj_l) < modl_to_double(obj_r)))); break;
-            case OP_CMPGT: vm_reg_write_tmp(state, reg_dst, bool_to_modl(modl_to_double(obj_l) > modl_to_double(obj_r))); break;
-            case OP_CMPNGT: vm_reg_write_tmp(state, reg_dst, bool_to_modl(!(modl_to_double(obj_l) > modl_to_double(obj_r)))); break;
+            case OP_ADD: vm_reg_write(state, reg_dst, double_to_modl(modl_to_double(obj_l) + modl_to_double(obj_r))); break;
+            case OP_SUB: vm_reg_write(state, reg_dst, double_to_modl(modl_to_double(obj_l) - modl_to_double(obj_r))); break;
+            case OP_MUL: vm_reg_write(state, reg_dst, double_to_modl(modl_to_double(obj_l) * modl_to_double(obj_r))); break;
+            case OP_DIV: vm_reg_write(state, reg_dst, double_to_modl(modl_to_double(obj_l) / modl_to_double(obj_r))); break;
+            case OP_MOD: vm_reg_write(state, reg_dst, double_to_modl(fmod(modl_to_double(obj_l), modl_to_double(obj_r)))); break;
+            // case OP_AND: vm_reg_write(state, reg_dst, double_to_modl(modl_to_double(obj_l) & modl_to_double(obj_r))); break;
+            // case OP_OR: vm_reg_write(state, reg_dst, double_to_modl(modl_to_double(obj_l) | modl_to_double(obj_r))); break;
+            // case OP_XOR: vm_reg_write(state, reg_dst, double_to_modl(modl_to_double(obj_l) ^ modl_to_double(obj_r))); break;
+            // case OP_NAND: vm_reg_write(state, reg_dst, double_to_modl(~(modl_to_double(obj_l) & modl_to_double(obj_r)))); break;
+            // case OP_NOR: vm_reg_write(state, reg_dst, double_to_modl(~(modl_to_double(obj_l) | modl_to_double(obj_r)))); break;
+            // case OP_NXOR: vm_reg_write(state, reg_dst, double_to_modl(~(modl_to_double(obj_l) ^ modl_to_double(obj_r)))); break;
+            case OP_CMPLT: vm_reg_write(state, reg_dst, bool_to_modl(modl_to_double(obj_l) < modl_to_double(obj_r))); break;
+            case OP_CMPNLT: vm_reg_write(state, reg_dst, bool_to_modl(!(modl_to_double(obj_l) < modl_to_double(obj_r)))); break;
+            case OP_CMPGT: vm_reg_write(state, reg_dst, bool_to_modl(modl_to_double(obj_l) > modl_to_double(obj_r))); break;
+            case OP_CMPNGT: vm_reg_write(state, reg_dst, bool_to_modl(!(modl_to_double(obj_l) > modl_to_double(obj_r)))); break;
+            case OP_CMPLE: vm_reg_write(state, reg_dst, bool_to_modl(modl_to_double(obj_l) <= modl_to_double(obj_r))); break;
+            case OP_CMPNLE: vm_reg_write(state, reg_dst, bool_to_modl(!(modl_to_double(obj_l) <= modl_to_double(obj_r)))); break;
+            case OP_CMPGE: vm_reg_write(state, reg_dst, bool_to_modl(modl_to_double(obj_l) >= modl_to_double(obj_r))); break;
+            case OP_CMPNGE: vm_reg_write(state, reg_dst, bool_to_modl(!(modl_to_double(obj_l) >= modl_to_double(obj_r)))); break;
             default:
             {
               printf("%s\n", "\x1b[31;1m  this operation is not supported on floats\x1b[0m");
@@ -1322,9 +1527,19 @@ struct ModlObject * run(struct VMState * const state)
           } break;
         }
 
-        modl_object_release_tmp(obj_l);
-        modl_object_release_tmp(obj_r);
+        modl_object_release(obj_l);
+        modl_object_release(obj_r);
       } break;
+
+      case OP_CMPEQ:
+      case OP_CMPNEQ:
+      {
+        vm_reg_write(state, instruction.a[0].r[0], bool_to_modl(modl_object_equals(
+          vm_reg_read(state, instruction.a[0].r[0]),
+          vm_reg_read(state, instruction.a[0].r[1])
+        ) == (instruction.opcode == OP_CMPEQ)));
+      } break;
+
 
       case OP_JCF:
       case OP_JCT:
@@ -1432,6 +1647,11 @@ struct ModlObject * run(struct VMState * const state)
         modl_object_release_tmp(index);
       } break;
 
+      case OP_ENVPUSH:
+      {
+
+      } break;
+
       default:
       {
         printf("\x1b[31;1m  Instruction implementation not found\x1b[0m\n");
@@ -1440,21 +1660,8 @@ struct ModlObject * run(struct VMState * const state)
     }
 
     state->ip += instruction.byte_length;
-
-    struct InstructionParametersTemplate template = instruction_parameters_templates[instruction.opcode];
-    for (byte i = 0; i < 4; ++i)
-    {
-      switch (template.p[i])
-      {
-        case TP_SEBO:
-          // printf("%s\n", "  releasing instruction's temporary object");
-          modl_object_release_tmp(instruction.a[i].object);
-        default: break;
-      }
-    }
+    instruction_release(instruction);
   }
-
-  return NULL;
 }
 
 
@@ -1491,7 +1698,374 @@ static struct ModlObject * modl_std_print(struct VMState * vm)
 {
   display_modl_object(vm->stack[--vm->sp]);
   printf("%c", '\n');
-  return NULL;
+  modl_object_release(vm->stack[vm->sp]);
+  return modl_nil();
+}
+
+static struct ModlObject * modl_std_concat_strings(struct VMState * vm)
+{
+  struct ModlObject * a = vm->stack[--vm->sp];
+  struct ModlObject * b = vm->stack[--vm->sp];
+
+  char res[strlen(a->value.string) + strlen(b->value.string) + 1];
+  strcpy(res, a->value.string);
+  strcat(res, b->value.string);
+
+  modl_object_release(a);
+  modl_object_release(b);
+
+  return str_to_modl(res);
+}
+
+static struct ModlObject * modl_std_to_string(struct VMState * vm)
+{
+  struct ModlObject * a = vm->stack[--vm->sp];
+
+  switch (a->type)
+  {
+    case ModlTypeNil: modl_object_release(a); return str_to_modl("nil");
+    case ModlTypeBoolean:
+    {
+      bool val = modl_to_bool(a);
+      modl_object_release(a);
+      return str_to_modl(val ? "true" : "false");
+    }
+    case ModlTypeInteger:
+    {
+      char res[21];
+      sprintf(res, "%ld", modl_to_int(a));
+      modl_object_release(a);
+      return str_to_modl(res);
+    }
+    case ModlTypeString:
+    {
+      return a;
+    }
+
+    default: modl_object_release(a); return modl_nil();
+  }
+}
+
+
+static struct ModlObject * modl_std_table_keys(struct VMState * vm)
+{
+  struct ModlObject * table = vm->stack[--vm->sp];
+  struct ModlObject * ret = modl_table();
+
+  {
+    struct ModlTableNode * node = table->value.table.integer_nodes;
+    while (NULL != node->key)
+    {
+      modl_table_push_v(ret, (struct ModlObject *) node->key);
+      node = node->next;
+    }
+  }
+
+  {
+    struct ModlTableNode * node = table->value.table.string_nodes;
+    while (NULL != node->key)
+    {
+      modl_table_push_v(ret, (struct ModlObject *) node->key);
+      node = node->next;
+    }
+  }
+
+  modl_object_release(table);
+  return ret;
+}
+
+static struct ModlObject * modl_std_table_size(struct VMState * vm)
+{
+  struct ModlObject * table = vm->stack[--vm->sp];
+  int64_t count = 0;
+
+  {
+    struct ModlTableNode const * node = table->value.table.integer_nodes;
+    while (NULL != node->key)
+    {
+      count += 1;
+      node = node->next;
+    }
+  }
+
+  {
+    struct ModlTableNode const * node = table->value.table.string_nodes;
+    while (NULL != node->key)
+    {
+      count += 1;
+      node = node->next;
+    }
+  }
+
+  modl_object_release(table);
+  return int_to_modl(count);
+}
+
+static struct ModlObject * modl_std_table_empty(struct VMState * vm)
+{
+  struct ModlObject * table = vm->stack[--vm->sp];
+
+  {
+    struct ModlTableNode * node = table->value.table.integer_nodes;
+    if (NULL != node->key)
+    {
+      modl_object_release(table);
+      return bool_to_modl(FALSE);
+    }
+  }
+
+  {
+    struct ModlTableNode * node = table->value.table.string_nodes;
+    if (NULL != node->key)
+    {
+      modl_object_release(table);
+      return bool_to_modl(FALSE);
+    }
+  }
+
+  modl_object_release(table);
+  return bool_to_modl(TRUE);
+}
+
+static struct ModlObject * modl_std_table_pop(struct VMState * vm)
+{
+  struct ModlObject * table = vm->stack[--vm->sp];
+
+  if (NULL == table->value.table.last_consecutive_integer_node)
+  {
+    modl_object_release(table);
+    return modl_nil();
+  }
+
+  struct ModlTableNode * ret_node = table->value.table.last_consecutive_integer_node;
+
+  struct ModlTableNode * pred = NULL;
+  {
+    struct ModlTableNode * node = table->value.table.integer_nodes;
+    while (NULL != node->key && node != ret_node)
+    {
+      if (node->next == ret_node)
+      {
+        pred = node;
+        break;
+      }
+      node = node->next;
+    }
+  }
+
+  if (NULL == pred)
+  {
+    table->value.table.integer_nodes = ret_node->next;
+  }
+  else
+  {
+    pred->next = ret_node->next;
+  }
+
+  if (ret_node->key->value.integer == 0)
+  {
+    table->value.table.last_consecutive_integer_node = NULL;
+  }
+  else
+  {
+    table->value.table.last_consecutive_integer_node = pred;
+  }
+
+  modl_object_release((struct ModlObject *) ret_node->key);
+  modl_object_release(table);
+  return modl_object_disown(ret_node->value);
+}
+
+static struct ModlObject * modl_std_table_zip(struct VMState * vm)
+{
+  struct ModlObject * kt = vm->stack[--vm->sp];
+  struct ModlObject * vt = vm->stack[--vm->sp];
+
+  struct ModlObject * rt = modl_table_new();
+
+  if (NULL != kt->value.table.last_consecutive_integer_node)
+  if (NULL != vt->value.table.last_consecutive_integer_node)
+  {
+    struct ModlTableNode * nodeK = kt->value.table.integer_nodes;
+    struct ModlTableNode * nodeV = vt->value.table.integer_nodes;
+    while (0 != nodeK->key->value.integer)
+      nodeK = nodeK->next;
+    while (0 != nodeV->key->value.integer)
+      nodeV = nodeV->next;
+
+    while (nodeK != kt->value.table.last_consecutive_integer_node->next
+        && nodeV != vt->value.table.last_consecutive_integer_node->next)
+    {
+      modl_table_insert_kv(rt, nodeK->value, nodeV->value);
+      nodeK = nodeK->next;
+      nodeV = nodeV->next;
+    }
+  }
+
+  modl_object_release(kt);
+  modl_object_release(vt);
+  return modl_object_disown(rt);
+}
+
+static struct ModlObject * modl_std_array_foreach(struct VMState * vm)
+{
+  struct ModlObject * array = vm->stack[--vm->sp];
+  struct ModlObject * func = vm->stack[--vm->sp];
+
+  if (NULL != array->value.table.last_consecutive_integer_node)
+  {
+    struct ModlTableNode * node = array->value.table.integer_nodes;
+    while (0 != node->key->value.integer)
+      node = node->next;
+
+    while (node != array->value.table.last_consecutive_integer_node->next)
+    {
+      vm->stack[vm->sp++] = modl_object_take(node->value);
+      vm_call_function(vm, func);
+      node = node->next;
+    }
+  }
+
+  modl_object_release(array);
+  modl_object_release(func);
+  return modl_nil();
+}
+
+static struct ModlObject * modl_std_array_map(struct VMState * vm)
+{
+  struct ModlObject * array = vm->stack[--vm->sp];
+  struct ModlObject * func = vm->stack[--vm->sp];
+
+  struct ModlObject * ret = modl_table_new();
+
+  if (NULL != array->value.table.last_consecutive_integer_node)
+  {
+    struct ModlTableNode * node = array->value.table.integer_nodes;
+    while (0 != node->key->value.integer)
+      node = node->next;
+
+    while (node != array->value.table.last_consecutive_integer_node->next)
+    {
+      vm->stack[vm->sp++] = modl_object_take(node->value);
+      vm_call_function(vm, func);
+      modl_table_push_v(ret, vm_reg_read(vm, REG(0)));
+      node = node->next;
+    }
+  }
+
+  modl_object_release(array);
+  modl_object_release(func);
+  return modl_object_disown(ret);
+}
+
+static struct ModlObject * modl_std_array_concat(struct VMState * vm)
+{
+  struct ModlObject * a = vm->stack[--vm->sp];
+  struct ModlObject * b = vm->stack[--vm->sp];
+
+  struct ModlObject * rt = modl_table_new();
+
+  if (NULL != a->value.table.last_consecutive_integer_node)
+  {
+    struct ModlTableNode const * node = a->value.table.integer_nodes;
+    while (0 != node->key->value.integer)
+      node = node->next;
+
+    while (node != a->value.table.last_consecutive_integer_node->next)
+    {
+      modl_table_push_v(rt, node->value);
+      node = node->next;
+    }
+  }
+
+  if (NULL != b->value.table.last_consecutive_integer_node)
+  {
+    struct ModlTableNode const * node = b->value.table.integer_nodes;
+    while (0 != node->key->value.integer)
+      node = node->next;
+
+    while (node != b->value.table.last_consecutive_integer_node->next)
+    {
+      modl_table_push_v(rt, node->value);
+      node = node->next;
+    }
+  }
+
+  modl_object_release(a);
+  modl_object_release(b);
+  return modl_object_disown(rt);
+}
+
+static struct ModlObject * modl_std_array_contains(struct VMState * vm)
+{
+  struct ModlObject * array = vm->stack[--vm->sp];
+  struct ModlObject * obj = vm->stack[--vm->sp];
+
+  if (NULL == array->value.table.last_consecutive_integer_node)
+  {
+    modl_object_release(array);
+    modl_object_release(obj);
+    return bool_to_modl(FALSE);
+  }
+
+  {
+    struct ModlTableNode * node = array->value.table.integer_nodes;
+    while (0 != node->key->value.integer)
+      node = node->next;
+
+    while (node != array->value.table.last_consecutive_integer_node->next)
+    {
+      if (modl_object_equals(obj, node->value))
+      {
+        modl_object_release(array);
+        modl_object_release(obj);
+        return bool_to_modl(TRUE);
+      }
+
+      node = node->next;
+    }
+  }
+
+  modl_object_release(array);
+  modl_object_release(obj);
+  return bool_to_modl(FALSE);
+}
+
+static struct ModlObject * modl_std_array_map_flat(struct VMState * vm)
+{
+  struct ModlObject * array = vm->stack[--vm->sp];
+  struct ModlObject * func = vm->stack[--vm->sp];
+
+  struct ModlObject * ret = modl_table_new();
+
+  if (NULL == array->value.table.last_consecutive_integer_node)
+  {
+    modl_object_release(array);
+    modl_object_release(func);
+    return modl_object_disown(ret);
+  }
+
+  {
+    struct ModlTableNode * node = array->value.table.integer_nodes;
+    while (0 != node->key->value.integer)
+      node = node->next;
+
+    while (node != array->value.table.last_consecutive_integer_node->next)
+    {
+      vm->stack[vm->sp++] = modl_object_take(node->value);
+      vm_call_function(vm, func);
+
+      vm->stack[vm->sp++] = modl_object_take(vm_reg_read(vm, REG(0)));
+      vm->stack[vm->sp++] = ret;
+      vm_call_function(vm, vm_find_external_function(vm, modl_std_array_concat));
+      ret = modl_object_take(vm_reg_read(vm, REG(0)));
+      node = node->next;
+    }
+  }
+
+  modl_object_release(array);
+  modl_object_release(func);
+  return modl_object_disown(ret);
 }
 
 
@@ -1510,12 +2084,13 @@ int main(int argc, char *argv[])
   clock_t begin = clock();
 
   static struct option long_options[] = {
-        {"stack_size",      required_argument, 0,  's' },
-        {"call_stack_size", required_argument, 0,  'c' },
-        {0,                 0,                 0,  0   }
-    };
+      {"stack_size",      required_argument, 0,  's' },
+      {"call_stack_size", required_argument, 0,  'c' },
+      {"silent",          no_argument,       0,  'l' },
+      {0,                 0,                 0,  0   }
+  };
 
-  while((opt = getopt_long(argc, argv, ":i:s:c", long_options, &long_index)) != -1)
+  while((opt = getopt_long(argc, argv, ":i:s:cl", long_options, &long_index)) != -1)
   {
     switch(opt)
     {
@@ -1554,6 +2129,11 @@ int main(int argc, char *argv[])
       case 'c':
       {
         max_count_call_stack = atoi(optarg);
+      } break;
+
+      case 'l':
+      {
+        VM_SETTING_SILENT = TRUE;
       } break;
 
       case ':':
@@ -1595,10 +2175,56 @@ int main(int argc, char *argv[])
   for (size_t i = 0; i < VM_SETTING_REGITERS_COUNT; ++i)
     vm.registers[i] = modl_nil_new();
 
-  uint64_t std_print_id = vm_add_external_function(&vm, modl_std_print);
 
+  uint64_t std_print_id = vm_add_external_function(&vm, modl_std_print);
+  uint64_t std_concat_id = vm_add_external_function(&vm, modl_std_concat_strings);
+  uint64_t std_to_string_id = vm_add_external_function(&vm, modl_std_to_string);
   modl_table_insert_kv(base_environment.vartable, str_to_modl("print"), efun_to_modl(std_print_id));
-  modl_table_insert_kv(base_environment.vartable, str_to_modl("stdout"), efun_to_modl(std_print_id));
+  modl_table_insert_kv(base_environment.vartable, str_to_modl("concat"), efun_to_modl(std_concat_id));
+  modl_table_insert_kv(base_environment.vartable, str_to_modl("toString"), efun_to_modl(std_to_string_id));
+
+
+  {
+    struct ModlObject * table_efuns = modl_table();
+
+    uint64_t std_table_keys_id = vm_add_external_function(&vm, modl_std_table_keys);
+    modl_table_insert_kv(table_efuns, str_to_modl("keys"), efun_to_modl(std_table_keys_id));
+
+    uint64_t std_table_empty_id = vm_add_external_function(&vm, modl_std_table_empty);
+    modl_table_insert_kv(table_efuns, str_to_modl("empty"), efun_to_modl(std_table_empty_id));
+
+    uint64_t std_table_pop_id = vm_add_external_function(&vm, modl_std_table_pop);
+    modl_table_insert_kv(table_efuns, str_to_modl("pop"), efun_to_modl(std_table_pop_id));
+
+    uint64_t std_table_size_id = vm_add_external_function(&vm, modl_std_table_size);
+    modl_table_insert_kv(table_efuns, str_to_modl("size"), efun_to_modl(std_table_size_id));
+
+    uint64_t std_table_zip_id = vm_add_external_function(&vm, modl_std_table_zip);
+    modl_table_insert_kv(table_efuns, str_to_modl("zip"), efun_to_modl(std_table_zip_id));
+
+    modl_table_insert_kv(base_environment.vartable, str_to_modl("Table"), table_efuns);
+  }
+
+  {
+    struct ModlObject * table_efuns = modl_table();
+
+    uint64_t std_array_foreach_id = vm_add_external_function(&vm, modl_std_array_foreach);
+    modl_table_insert_kv(table_efuns, str_to_modl("forEach"), efun_to_modl(std_array_foreach_id));
+
+    uint64_t std_array_map_id = vm_add_external_function(&vm, modl_std_array_map);
+    modl_table_insert_kv(table_efuns, str_to_modl("map"), efun_to_modl(std_array_map_id));
+
+    uint64_t std_array_map_flat_id = vm_add_external_function(&vm, modl_std_array_map_flat);
+    modl_table_insert_kv(table_efuns, str_to_modl("mapFlat"), efun_to_modl(std_array_map_flat_id));
+
+    uint64_t std_array_concat_id = vm_add_external_function(&vm, modl_std_array_concat);
+    modl_table_insert_kv(table_efuns, str_to_modl("concat"), efun_to_modl(std_array_concat_id));
+
+    uint64_t std_array_contains_id = vm_add_external_function(&vm, modl_std_array_contains);
+    modl_table_insert_kv(table_efuns, str_to_modl("contains"), efun_to_modl(std_array_contains_id));
+
+    modl_table_insert_kv(base_environment.vartable, str_to_modl("Array"), table_efuns);
+  }
 
 
   // struct BytecodeCompiler bcc = { (enum ModlOpcode*) calloc(16, sizeof(byte)), 0 };
@@ -1628,13 +2254,27 @@ int main(int argc, char *argv[])
   //
   // emit(&bcc, OP_RET);
 
-  printf("\x1b[34;1m%s\x1b[0m\n",   "-----=====      RUN       =====-----");
+  if (not VM_SETTING_SILENT)
+  {
+    printf("\x1b[34;1m%s\x1b[0m\n",   "-----=====      RUN       =====-----");
+  }
+
   vm.code = input;
   struct ModlObject * result = run(&vm);
-  printf("\n\x1b[34;1m%s\x1b[0m\n", "-----=====     RESULT     =====-----");
+
+  if (not VM_SETTING_SILENT)
+    printf("\n\x1b[34;1m%s\x1b[0m\n", "-----=====     RESULT     =====-----");
+
   display_modl_object(result);
-  modl_object_release(result);
   printf("%c", '\n');
+
+  for (byte i = 0; i < VM_SETTING_REGITERS_COUNT; ++i)
+    modl_object_release(vm.registers[i]);
+
+  modl_object_release(base_environment.vartable);
+
+  for (size_t i = 0; i < vm.sp; ++i)
+    modl_object_release(vm.stack[i]);
 
   free(vm.call_stack);
   free(vm.stack);
@@ -1642,8 +2282,7 @@ int main(int argc, char *argv[])
 
   clock_t end = clock();
   time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
-
-  printf("Time elapsed is %f seconds\n", time_spent);
+  printf("\ntime: %fs\n", time_spent);
 
   return EXIT_SUCCESS;
 }
