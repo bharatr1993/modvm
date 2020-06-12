@@ -224,11 +224,11 @@ bool modl_object_release(struct ModlObject * const self)
 
   self->instances_count -= 1;
 
-  if (self->instances_count >= (size_t)-1)
-  {
-    printf("\x1b[31;1m  %s  --> %ld\x1b[0m\n", "Liek watafak? instances count is negative?!?!", self->instances_count);
-    exit(EXIT_FAILURE);
-  }
+  // if (self->instances_count >= (size_t)-1)
+  // {
+  //   printf("\x1b[31;1m  %s  --> %ld\x1b[0m\n", "Liek watafak? instances count is negative?!?!", self->instances_count);
+  //   exit(EXIT_FAILURE);
+  // }
 
   if (self->instances_count == 0)
   {
@@ -469,6 +469,37 @@ bool modl_object_equals(struct ModlObject const * const self, struct ModlObject 
           && self->value.fun.context     == other->value.fun.context;
 
     default: return FALSE;
+  }
+}
+
+int modl_object_cmp(struct ModlObject const * const self, struct ModlObject const * const other)
+{
+  if (NULL == self || NULL == other) return -1;
+  if (self == other) return 0;
+  if (self->type != other->type) return -1;
+
+  switch (self->type)
+  {
+    case ModlTypeNil: return 0;
+    case ModlTypeBoolean: return self->value.boolean - other->value.boolean;
+    case ModlTypeInteger:
+      return self->value.integer > other->value.integer
+          ? 1
+        : self->value.integer == other->value.integer
+          ? 0 : -1;
+    case ModlTypeFloating:
+    return self->value.floating > other->value.floating
+        ? 1
+      : self->value.floating == other->value.floating
+        ? 0 : -1;
+    case ModlTypeString: return strcmp(self->value.string, other->value.string);
+    case ModlTypeTable: return -1;
+    case ModlTypeFunction:
+      return (self->value.fun.is_external == other->value.fun.is_external
+          && self->value.fun.position    == other->value.fun.position
+          && self->value.fun.context     == other->value.fun.context) ? 0 : -1;
+
+    default: return -1;
   }
 }
 
@@ -1072,7 +1103,7 @@ TemplateParameter
 
 struct InstructionParametersTemplate
 {
-  enum TemplateParameter p[4];
+  enum TemplateParameter p[2];
 };
 
 struct InstructionParametersTemplate instruction_parameters_templates[256] =
@@ -1134,8 +1165,10 @@ struct InstructionParametersTemplate instruction_parameters_templates[256] =
   [OP_ENVUPKT] = {{ TP_REGAL, }},
 };
 
-struct __attribute__ ((__packed__))
-Instruction
+
+#define INSTRUCTION_TEMPLATE_VALUES_COUNT 2
+
+struct Instruction
 {
   enum ModlOpcode opcode;
   size_t byte_length;
@@ -1145,9 +1178,10 @@ Instruction
     int64_t i64;
     byte r[2];
     struct ModlObject * object;
-  } a[4];
+  } a[INSTRUCTION_TEMPLATE_VALUES_COUNT];
 };
 
+struct Sebo *decoded_sebo_table;
 static struct Instruction decode_instruction(struct VMState * state)
 {
   enum ModlOpcode opcode = state->code[state->ip];
@@ -1162,7 +1196,7 @@ static struct Instruction decode_instruction(struct VMState * state)
   }
 
   size_t offset = 1;
-  for (byte i = 0; i < 4; ++i)
+  for (byte i = 0; i < INSTRUCTION_TEMPLATE_VALUES_COUNT; ++i)
   {
     switch (template.p[i])
     {
@@ -1197,7 +1231,18 @@ static struct Instruction decode_instruction(struct VMState * state)
 
       case TP_SEBO:
       {
-        struct Sebo data = modl_decode_sebo(&state->code[state->ip] + offset);
+        if (NULL != decoded_sebo_table[state->ip + offset].object)
+        {
+          instruction.a[i].object = decoded_sebo_table[state->ip + offset].object;
+          offset += decoded_sebo_table[state->ip + offset].byte_length;
+          instruction.byte_length = offset;
+          return instruction;
+        }
+
+        struct Sebo data = modl_decode_sebo(&state->code[state->ip] + offset);        
+        memcpy(&decoded_sebo_table[state->ip + offset], &data, sizeof (struct Sebo));
+        decoded_sebo_table[state->ip + offset].object = modl_object_take(data.object);
+        
         instruction.a[i].object = data.object;
         offset += data.byte_length;
       } break;
@@ -1216,7 +1261,7 @@ static void instruction_display(struct VMState * vm, struct Instruction instruct
   if (template.p[0] != TP_EMPTY)
     printf("%c", ' ');
 
-  for (byte i = 0; i < 4 && template.p[i] > TP_EMPTY; ++i)
+  for (byte i = 0; i < INSTRUCTION_TEMPLATE_VALUES_COUNT && template.p[i] > TP_EMPTY; ++i)
   {
     if (i > 0) printf("%s", ", ");
     switch (template.p[i])
@@ -1254,7 +1299,7 @@ static void instruction_display(struct VMState * vm, struct Instruction instruct
 void instruction_release(struct Instruction instruction)
 {
   struct InstructionParametersTemplate template = instruction_parameters_templates[instruction.opcode];
-  for (byte i = 0; i < 4; ++i)
+  for (byte i = 0; i < INSTRUCTION_TEMPLATE_VALUES_COUNT; ++i)
   {
     switch (template.p[i])
     {
@@ -2289,6 +2334,9 @@ int main(int argc, char *argv[])
   // emit(&bcc, REGS(REG(0), REG(1)));
   //
   // emit(&bcc, OP_RET);
+  
+  // printf("INSTRUCTION SIZE: %ld\n", sizeof(struct Instruction));
+  // printf("ModlObject size: %ld\n", sizeof (struct ModlObject));
 
   if (not VM_SETTING_SILENT)
   {
@@ -2296,6 +2344,7 @@ int main(int argc, char *argv[])
   }
 
   vm.code = input;
+  decoded_sebo_table = (struct Sebo *) calloc(input_length, sizeof (struct Sebo));
   struct ModlObject * result = run(&vm);
 
   if (not VM_SETTING_SILENT)
