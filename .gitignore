@@ -1,2 +1,12 @@
-modlvm
+.vscode/
+html/
+latex/
 
+modlvm
+tests/run_tests
+
+callgrind.*
+massif.*
+
+*.modbc
+prog.txt

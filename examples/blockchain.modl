@@ -1,0 +1,162 @@
+// Simple PoW Blockchain-Coin
+// No RSA Encryption for simplicity purposes
+// DONT USE THIS CODE FOR ACTUAL CRYPTOCURRENCIES
+// ^^^ who would do that :thinking:
+
+
+func hashDjb(cn, cm)
+{
+    h = 5381;
+    h = ((h << 5) + h) + cn;
+    h = ((h << 5) + h) + cm;
+};
+ 
+
+// VERY Bad hashing function
+func badHash(str)
+{
+    k = String.toArray(str);
+    result = [];
+
+    print(result);
+    seed = 300211;
+    i = 0;
+    while i < 64:
+    {
+        k[i] = if k[i] == nil: seed%256 else: k[i];
+        tmp = k[i];
+        seed = seed * 1103515245 + 12345;
+        seed = seed % 65535;
+        seed = seed ^ k[i] * 1123031;
+        k[i] = k[seed % #k];
+        k[seed & #k] = tmp;
+        i = i + 1;
+    };
+    
+    i = 0;
+    while i < 63:
+    {
+        result[] = hashDjb(k[i], k[i+1]) % 256;
+        i = i + 1;
+    };
+    i = 0; 
+    while i < #result:
+    {
+        result[i] = result[i] % 25;
+        result[i] = result[i] + 65;
+        i = i + 1;
+    };
+    String.fromArray(result)
+};
+Transaction = [from: nil, to: nil, amount: nil];
+
+func Transaction::new(from, to, amount)
+{
+    r = [
+        from: from,
+        to: to,
+        amount: amount
+    ];
+
+    r.__index = self;
+    
+    r
+};
+
+Block = [height: 0, nonce: 0];
+
+func Block::new(height, transactions)
+{
+    r = [
+        height: height,
+        transactions: transactions
+    ];
+    r.__index = self;
+    
+    r.hash = r::calculateHash()
+    
+    r
+};
+
+func Block::calculateHash()
+{
+    strToHash = "";
+    strToHash = strToHash + toString(self.height);
+    i = 0;
+    while i < #self.transactions:
+    {
+        strToHash = strToHash + toString(self.transactions[i].amount);
+        strToHash = strToHash + self.transactions[i].from;
+        strToHash = strToHash + self.transactions[i].to;
+        i = i + 1;
+    };
+    badHash(strToHash)
+};
+
+BlockChain = [blocks: [], pendingTransactions: []];
+
+func BlockChain::new()
+{
+    r = [pendingTransactions: []];
+    r.__index = self;
+    r::createGenesisBlock()
+    r
+};
+
+func BlockChain::createGenesisBlock()
+{
+    // Ideally we would need RSA here
+    self.blocks[] = Block::new(0, [Transaction::new("system", "system", 10000)])
+};
+
+func BlockChain::createTransaction(transaction)
+{
+    if (self::getBalance(transaction.from) < transaction.amount)
+    {
+        return false;
+    };
+    self.pendingTransactions[] = transaction;
+    return true;
+};
+
+func BlockChain::getBalance(user)
+{
+    balance = 0;
+    i = 0;
+    while i < #self.blocks:
+    {
+        j = 0;
+        while j < #self.blocks[i].transactions:
+        {
+            if self.blocks[i].transactions[j].from == user && i > 0:
+                balance = balance - self.blocks[i].transactions[j].amount;
+            
+            if self.blocks[i].transactions[j].to == user:
+                balance = balance + self.blocks[i].transactions[j].amount;
+            j = j + 1;
+        };
+        i = i + 1;
+    };
+    print("Balance of user "+user+" is "+toString(balance));
+    balance
+};
+
+func BlockChain::isChainValid()
+{
+    i = 0;
+    while i < #self.blocks:
+    {
+        if self.blocks[i].previousHash != self.blocks[i-1].hash:
+        {
+            print("Chain is invalid");
+            return false;
+        };
+        i = i + 1;
+    };
+    print("Chain is valid");
+    return true;
+};
+
+b = BlockChain::new();
+b::getBalance("system");
+b::isChainValid();
