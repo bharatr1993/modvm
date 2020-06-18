@@ -21,6 +21,8 @@ struct Environment
 {
   struct Environment * parent;
   struct ModlObject vartable;
+  struct ModlObject nametable;
+  uint64_t next_variable_id;
 };
 
 struct CallFrame
@@ -161,6 +163,7 @@ static struct Instruction decode_instruction(struct VMState * state)
   enum ModlOpcode opcode = state->code[state->ip];
   struct Instruction instruction = { .opcode = opcode };
   struct InstructionParametersTemplate template = instruction_parameters_templates[opcode];
+  #ifndef VM_FAST
   if (TP_ERROR == template.p[0])
   {
     char const * name = instructions_names_table[opcode];
@@ -168,6 +171,7 @@ static struct Instruction decode_instruction(struct VMState * state)
     printf("\x1b[31;1mfailed to decode instruction: %s\x1b[0m\n", name);
     exit(EXIT_FAILURE);
   }
+  #endif
 
   size_t offset = 1;
   for (byte i = 0; i < INSTRUCTION_TEMPLATE_VALUES_COUNT; ++i)
@@ -231,6 +235,7 @@ static struct Instruction decode_instruction(struct VMState * state)
   return instruction;
 }
 
+#ifndef VM_FAST
 static void instruction_display(struct VMState * vm, struct Instruction instruction)
 {
   printf("\x1b[36m%-8s\x1b[0m", instructions_names_table[instruction.opcode]);
@@ -273,8 +278,9 @@ static void instruction_display(struct VMState * vm, struct Instruction instruct
 
   printf("%c", '\n');
 }
+#endif
 
-void instruction_release(struct Instruction instruction)
+inline void instruction_release(struct Instruction instruction)
 {
   struct InstructionParametersTemplate template = instruction_parameters_templates[instruction.opcode];
   for (byte i = 0; i < INSTRUCTION_TEMPLATE_VALUES_COUNT; ++i)
@@ -290,14 +296,17 @@ void instruction_release(struct Instruction instruction)
 }
 
 
-struct ModlObject vm_reg_read(struct VMState * state, byte r)
+inline struct ModlObject vm_reg_read(struct VMState * state, byte r)
 {
+  #ifndef VM_FAST
   state->ram.read_after_rewrite[r] = TRUE;
+  #endif
   return state->registers[r];
 }
 
-void vm_reg_write(struct VMState * state, byte r, struct ModlObject val)
+static inline void vm_reg_write(struct VMState * state, byte r, struct ModlObject val)
 {
+  #ifndef VM_FAST
   if (not VM_SETTING_SILENT)
   {
     if (not state->ram.read_after_rewrite[r])
@@ -312,14 +321,21 @@ void vm_reg_write(struct VMState * state, byte r, struct ModlObject val)
     state->ram.read_after_rewrite[r] = FALSE;
     state->ram.last_write_points[r] = state->ip;
   }
+  #endif
 
-  if (modl_object_equals(val, state->registers[r])) return;
-
-  modl_object_release(state->registers[r]);
-  state->registers[r] = modl_object_take(val);
+  if (modl_object_is_value_type(state->registers[r]))
+  {
+    state->registers[r] = modl_object_take(val);
+  }
+  else
+  {
+    struct ModlObject tmpref = modl_object_disown(state->registers[r]);
+    state->registers[r] = modl_object_take(val);
+    modl_object_release_tmp(tmpref);
+  }
 }
 
-void vm_reg_write_i(struct VMState * const state, byte r, int64_t val)
+static inline void vm_reg_write_i(struct VMState * const state, byte r, int64_t val)
 {
   // if (not modl_object_is_single(&state->registers[r]))
   return vm_reg_write(state, r, int_to_modl(val));
@@ -364,6 +380,9 @@ struct ModlObject vm_call_function(struct VMState * state, struct ModlObject obj
     exit(EXIT_FAILURE);
   }
 
+  struct ModlObject ret;
+
+  #ifndef VM_FAST
   struct Environment * env = calloc(1, sizeof (struct Environment));
   env->parent = obj.value.ref->value.fun.context;
   env->vartable = modl_table_new();
@@ -371,8 +390,6 @@ struct ModlObject vm_call_function(struct VMState * state, struct ModlObject obj
     .return_address = state->ip,
     .environment = env,
   };
-
-  struct ModlObject ret;
 
   if (obj.value.ref->value.fun.is_external)
   {
@@ -389,8 +406,33 @@ struct ModlObject vm_call_function(struct VMState * state, struct ModlObject obj
   free(env);
   state->ip = state->call_stack[state->csp].return_address;
   state->csp -= 1;
-
   modl_object_release_tmp(obj);
+  #else
+      if (obj.value.ref->value.fun.is_external)
+      {
+        ret = vm_get_external_function(state, obj.value.ref->value.fun.position)(state);
+        vm_reg_write(state, REG(0), ret);
+        modl_object_release_tmp(obj);
+        return ret;
+      }
+
+      struct Environment * env = calloc(1, sizeof (struct Environment));
+      env->parent = obj.value.ref->value.fun.context;
+      env->vartable = modl_table_new();
+      state->call_stack[++state->csp] = (struct CallFrame) {
+        .return_address = state->ip,
+        .environment = env,
+      };
+
+      state->ip = obj.value.ref->value.fun.position;
+      ret = run(state);
+      modl_object_release(env->vartable);
+      free(env);
+      state->ip = state->call_stack[state->csp].return_address;
+      state->csp -= 1;
+      modl_object_release_tmp(obj);
+  #endif
+
   return ret;
 }
 
@@ -429,9 +471,16 @@ struct ModlObject run(struct VMState * state)
       // printf("%c", '\n');
     }
 
+    
+    #ifndef VM_FAST
     if (not VM_SETTING_SILENT) printf("[%04lx] ", state->ip);
+    #endif
+
     struct Instruction instruction = decode_instruction(state);
+
+    #ifndef VM_FAST
     if (not VM_SETTING_SILENT) instruction_display(state, instruction);
+    #endif
 
     switch (instruction.opcode)
     {
@@ -515,7 +564,7 @@ struct ModlObject run(struct VMState * state)
         {
           obj_r = modl_maybe_cast(obj_r, ModlTypeFloating);
         }
-        if (modl_object_type_is(obj_r, ModlTypeFloating))
+        else if (modl_object_type_is(obj_r, ModlTypeFloating))
         {
           obj_l = modl_maybe_cast(obj_l, ModlTypeFloating);
         }
@@ -532,9 +581,9 @@ struct ModlObject run(struct VMState * state)
 
         if (ModlTypeString == obj_l.type && instruction.opcode == OP_ADD)
         {
-          state->stack[state->sp++] = obj_r;
-          state->stack[state->sp++] = obj_l;
-          vm_call_function(state, vm_find_external_function(state, modl_std_concat_strings));
+          state->stack[state->sp++] = modl_object_take(obj_r);
+          state->stack[state->sp++] = modl_object_take(obj_l);
+          vm_reg_write(state, reg_dst, modl_std_concat_strings(state));
           break;
         }
 
@@ -790,34 +839,34 @@ struct ModlObject run(struct VMState * state)
 }
 
 
-struct BytecodeCompiler
-{
-  byte* data;
-  size_t offset;
-};
+// struct BytecodeCompiler
+// {
+//   byte* data;
+//   size_t offset;
+// };
 
 
-size_t emit(struct BytecodeCompiler * compiler, byte value)
-{
-  size_t addr = compiler->offset;
-  compiler->data[compiler->offset++] = value;
-  return addr;
-}
+// size_t emit(struct BytecodeCompiler * compiler, byte value)
+// {
+//   size_t addr = compiler->offset;
+//   compiler->data[compiler->offset++] = value;
+//   return addr;
+// }
 
-size_t emit_modl(struct BytecodeCompiler * compiler, struct ModlObject * object)
-{
-  struct Sebo repr = modl_encode_sebo(*object);
-  if (0 == repr.byte_length)
-  {
-    printf("%s\n", "Cannot encode NULL object");
-    exit(EXIT_FAILURE);
-  }
+// size_t emit_modl(struct BytecodeCompiler * compiler, struct ModlObject * object)
+// {
+//   struct Sebo repr = modl_encode_sebo(*object);
+//   if (0 == repr.byte_length)
+//   {
+//     printf("%s\n", "Cannot encode NULL object");
+//     exit(EXIT_FAILURE);
+//   }
 
-  for (size_t i = 0; i < repr.byte_length; ++i)
-    emit(compiler, repr.data[i]);
+//   for (size_t i = 0; i < repr.byte_length; ++i)
+//     emit(compiler, repr.data[i]);
 
-  return repr.byte_length;
-}
+//   return repr.byte_length;
+// }
 
 
 /* LEAK-FREE */

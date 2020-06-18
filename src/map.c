@@ -92,16 +92,8 @@ struct ModlMap * modl_map_resize(struct ModlMap * self)
                     bkt_prev->next = bkt->next;
                 }
 
-                if (NULL != bkt_prev)
-                {
-                    *bkt = tmp_obj;
-                    self->vec[new_index].next = bkt;
-                }
-                else
-                {
-                    *bkt = tmp_obj;
-                    self->vec[new_index].next = bkt;
-                }
+                *bkt = tmp_obj;
+                self->vec[new_index].next = bkt;
             }
             else
             {

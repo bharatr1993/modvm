@@ -1,5 +1,6 @@
 #pragma once
 
+#include "defs.h"
 #include "map.h"
 #include "object.h"
 
@@ -20,4 +21,7 @@ struct ModlObjectReference
   } value;
 
   int32_t count;
+  uint32_t hash;
+
+  bool has_hash;
 };

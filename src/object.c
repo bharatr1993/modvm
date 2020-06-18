@@ -8,18 +8,14 @@ struct ModlObject modl_object_make_ref()
 {
   struct ModlObject object = { .value = { .ref = malloc(sizeof (struct ModlObjectReference)) } };
   object.value.ref->count = 0;
+  object.value.ref->has_hash = 0;
   return object;
-}
-
-struct ModlObject modl_nil()
-{
-  return  (struct ModlObject) { .type = ModlTypeNil };
 }
 
 struct ModlObject modl_table()
 {
-  struct ModlObject object = { .type = ModlTypeTable, .value = { .ref = malloc(sizeof (struct ModlObjectReference)) } };
-  object.value.ref->count = 0;
+  struct ModlObject object = modl_object_make_ref();
+  object.type = ModlTypeTable;
   modl_map_init(&object.value.ref->value.table, 8);
   return object;
 }
@@ -31,37 +27,13 @@ struct ModlObject modl_table_new()
   return object;
 }
 
-bool modl_object_type_is(struct ModlObject self, enum ModlType type)
-{
-  return self.type == type;
-}
-
-bool modl_object_is_value_type(struct ModlObject self)
-{
-  return self.type <= ModlTypeFloating;
-}
-
-
-struct ModlObject bool_to_modl(bool data)
-{
-  return (struct ModlObject) { .type = ModlTypeBoolean, .value = { .boolean = data }};
-}
-
-struct ModlObject int_to_modl(int64_t data)
-{
-  return (struct ModlObject) { .type = ModlTypeInteger, .value = { .integer = data }};
-}
-
-struct ModlObject double_to_modl(double data)
-{
-  return (struct ModlObject) { .type = ModlTypeFloating, .value = { .floating = data }};
-}
 
 struct ModlObject transfer_str_to_modl(char * data)
 {
   struct ModlObject object = modl_object_make_ref();
   object.type = ModlTypeString;
   object.value.ref->value.string = data;
+  modl_object_hash(object);
   return object;
 }
 
@@ -70,6 +42,7 @@ struct ModlObject str_to_modl(char const * data)
   struct ModlObject object = modl_object_make_ref();
   object.type = ModlTypeString;
   object.value.ref->value.string = strcpy(malloc((strlen(data) + 1) * sizeof(char)), data);
+  modl_object_hash(object);
   return object;
 }
 
@@ -97,27 +70,6 @@ struct ModlObject efun_to_modl(uint64_t pointer)
   return object;
 }
 
-
-bool modl_to_bool(struct ModlObject object)
-{
-  // if (NULL == object) return FALSE;
-  // if (ModlTypeBoolean != object->type) return TRUE;
-  return (object.value.boolean ? TRUE : FALSE);
-}
-
-int64_t modl_to_int(struct ModlObject object)
-{
-  // if (NULL == object) return 0;
-  // if (ModlTypeInteger != object->type) return 0;
-  return object.value.integer;
-}
-
-double modl_to_double(struct ModlObject object)
-{
-  // if (NULL == object) return 0.0;
-  // if (ModlTypeFloating != object->type) return 0.0;
-  return object.value.floating;
-}
 
 char const * modl_to_str(struct ModlObject object)
 {
@@ -153,11 +105,11 @@ struct ModlObject modl_object_disown(struct ModlObject self)
   if (modl_object_is_value_type(self)) return self;
 
   self.value.ref->count -= 1;
-  if (self.value.ref->count < 0)
-  {
-    printf("\x1b[31;1m  %s  --> %d\x1b[0m\n", "Liek watafak? instances count is negative?!?!", self.value.ref->count);
-    exit(EXIT_FAILURE);
-  }
+  // if (self.value.ref->count < 0)
+  // {
+  //   printf("\x1b[31;1m  %s  --> %d\x1b[0m\n", "Liek watafak? instances count is negative?!?!", self.value.ref->count);
+  //   exit(EXIT_FAILURE);
+  // }
 
   return self;
 }
@@ -241,20 +193,42 @@ bool modl_object_equals(struct ModlObject self, struct ModlObject other)
   // if (self == other) return TRUE;
   if (self.type != other.type) return FALSE;
 
-  switch (self.type)
+  if (modl_object_is_value_type(self))
   {
-    case ModlTypeNil: return TRUE;
-    case ModlTypeBoolean: return self.value.boolean == other.value.boolean;
-    case ModlTypeInteger: return self.value.integer == other.value.integer;
-    case ModlTypeFloating: return self.value.floating == other.value.floating;
-    case ModlTypeString: return 0 == strcmp(self.value.ref->value.string, other.value.ref->value.string);
-    case ModlTypeTable: return FALSE;
-    case ModlTypeFunction:
-      return self.value.ref->value.fun.is_external == other.value.ref->value.fun.is_external
-          && self.value.ref->value.fun.position    == other.value.ref->value.fun.position
-          && self.value.ref->value.fun.context     == other.value.ref->value.fun.context;
+    switch (self.type)
+    {
+      case ModlTypeNil: return TRUE;
+      case ModlTypeBoolean: return self.value.boolean == other.value.boolean;
+      case ModlTypeInteger: return self.value.integer == other.value.integer;
+      case ModlTypeFloating: return self.value.floating == other.value.floating;
+      default: return TRUE;
+    }
+  }
+  else
+  {
+    if (self.value.ref == other.value.ref)
+      return TRUE;
+      
+    if (self.value.ref->has_hash && other.value.ref->has_hash && self.value.ref->hash != other.value.ref->hash)
+    {
+      return FALSE;
+    }
 
-    default: return FALSE;
+    switch (self.type)
+    {
+      case ModlTypeString:
+        return self.value.ref->value.string == other.value.ref->value.string
+            || 0 == strcmp(self.value.ref->value.string, other.value.ref->value.string);
+
+      case ModlTypeTable: return FALSE;
+
+      case ModlTypeFunction:
+        return self.value.ref->value.fun.is_external == other.value.ref->value.fun.is_external
+            && self.value.ref->value.fun.position    == other.value.ref->value.fun.position
+            && self.value.ref->value.fun.context     == other.value.ref->value.fun.context;
+
+      default: return FALSE;
+    }
   }
 }
 
@@ -578,8 +552,8 @@ void modl_object_display(struct ModlObject const * object)
 
     case ModlTypeTable:
     {
-      printf("%s", "[ ... ]");
-      break;
+      // printf("%s", "[ ... ]");
+      // break;
       modl_map_print(&object->value.ref->value.table);
       // printf("%c", '[');
 
@@ -687,15 +661,31 @@ static uint32_t str_hash (char const * data, size_t len)
 
 uint32_t modl_object_hash(struct ModlObject self)
 {
-  switch (self.type)
+  if (modl_object_is_value_type(self))
   {
-    case ModlTypeNil: return 0u;
-    case ModlTypeBoolean: return 1u + (uint32_t) self.value.boolean;
-    case ModlTypeInteger: return self.value.integer;
-    case ModlTypeFloating: return (uint32_t) self.value.floating;
-    case ModlTypeString: return str_hash(self.value.ref->value.string, strlen(self.value.ref->value.string));
-    case ModlTypeTable: return (uint32_t) ((size_t) &self.value.ref->value.table);
-    case ModlTypeFunction: return (((uint32_t) self.value.ref->value.fun.is_external) << 31u) ^ ((uint32_t) self.value.ref->value.fun.position);
+    switch (self.type)
+    {
+      case ModlTypeNil: return 0u;
+      case ModlTypeBoolean: return 1u + (uint32_t) self.value.boolean;
+      case ModlTypeInteger: return self.value.integer;
+      case ModlTypeFloating: return (uint32_t) *((uint64_t*) &self.value.floating);
+    }
+  }
+  else
+  {
+    if (self.value.ref->has_hash)
+      return self.value.ref->hash;
+    
+    self.value.ref->has_hash = TRUE;
+    switch (self.type)
+    {
+      case ModlTypeString:
+        return self.value.ref->hash = str_hash(self.value.ref->value.string, strlen(self.value.ref->value.string));
+      case ModlTypeTable:
+        return self.value.ref->hash = (uint32_t) ((size_t) &self.value.ref->value.table);
+      case ModlTypeFunction:
+        return self.value.ref->hash = (((uint32_t) self.value.ref->value.fun.is_external) << 31u) ^ ((uint32_t) self.value.ref->value.fun.position);
+    }
   }
 
   return 0u;

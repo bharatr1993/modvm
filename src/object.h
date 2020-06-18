@@ -50,16 +50,25 @@ struct ModlObject
 /*  BASE OBJECT METHODS  */
 struct ModlObject modl_object_make_ref();
 
-struct ModlObject modl_nil();
+inline struct ModlObject modl_nil()
+{ return  (struct ModlObject) { .type = ModlTypeNil }; }
 struct ModlObject modl_table();
 struct ModlObject modl_table_new();
 
-bool modl_object_type_is(struct ModlObject self, enum ModlType type);
-bool modl_object_is_value_type(struct ModlObject self);
+inline bool modl_object_type_is(struct ModlObject self, enum ModlType type)
+{ return self.type == type; }
+inline bool modl_object_is_value_type(struct ModlObject self)
+{ return self.type <= ModlTypeFloating; }
 
-struct ModlObject bool_to_modl(bool data);
-struct ModlObject int_to_modl(int64_t data);
-struct ModlObject double_to_modl(double data);
+inline struct ModlObject bool_to_modl(bool data)
+{ return (struct ModlObject) { .type = ModlTypeBoolean, .value = { .boolean = data }}; }
+
+inline struct ModlObject int_to_modl(int64_t data)
+{ return (struct ModlObject) { .type = ModlTypeInteger, .value = { .integer = data }}; }
+
+inline struct ModlObject double_to_modl(double data)
+{ return (struct ModlObject) { .type = ModlTypeFloating, .value = { .floating = data }}; }
+
 struct ModlObject transfer_str_to_modl(char * data);
 struct ModlObject str_to_modl(char const * data);
 struct ModlObject ifun_to_modl(struct Environment * environment, uint64_t position);
@@ -82,9 +91,15 @@ int modl_object_cmp(struct ModlObject self, struct ModlObject other);
 uint32_t modl_object_hash(struct ModlObject self);
 
 /*  CONVERTERS  */
-bool modl_to_bool(struct ModlObject object);
-int64_t modl_to_int(struct ModlObject object);
-double modl_to_double(struct ModlObject object);
+inline bool modl_to_bool(struct ModlObject object)
+{ return (object.value.boolean ? TRUE : FALSE); }
+
+inline int64_t modl_to_int(struct ModlObject object)
+{ return object.value.integer; }
+
+inline double modl_to_double(struct ModlObject object)
+{ return object.value.floating; }
+
 char const * modl_to_str(struct ModlObject object);
 
 struct ModlObject modl_maybe_cast(struct ModlObject object, enum ModlType target_type);
